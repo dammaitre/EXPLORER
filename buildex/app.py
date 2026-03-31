@@ -227,6 +227,9 @@ class App:
         )
         self.paned.add(self.main_frame, minsize=400)
 
+        # Single-click on left panel returns keyboard focus to main frame
+        self.left_panel.focus_back_cb = self.main_frame._tree.focus_set
+
     # ------------------------------------------------------------------
     # Navigation controller (single point of truth)
     # ------------------------------------------------------------------

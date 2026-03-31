@@ -83,12 +83,16 @@ class MainFrame(ttk.Frame):
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # ── Bindings ──────────────────────────────────────────────────
-        self._tree.bind("<ButtonRelease-1>", self._on_click)
+        self._tree.bind("<ButtonRelease-1>",  self._on_click)
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
-        self._tree.bind("<Left>",      self._go_up)
-        self._tree.bind("<BackSpace>", self._go_up)
-        self._tree.bind("<Right>",     self._open_selected)
-        self._tree.bind("<Return>",    self._open_selected)
+        self._tree.bind("<Left>",             self._go_up)
+        self._tree.bind("<BackSpace>",        self._go_up)
+        self._tree.bind("<Right>",            self._open_selected)
+        self._tree.bind("<Return>",           self._open_selected)
+        self._tree.bind("<Up>",               self._on_up)
+        self._tree.bind("<Down>",             self._on_down)
+        self._tree.bind("<Control-Up>",       self._on_ctrl_up)
+        self._tree.bind("<Control-Down>",     self._on_ctrl_down)
 
     # ------------------------------------------------------------------
     # Public API — navigation
@@ -241,12 +245,13 @@ class MainFrame(ttk.Frame):
                 tags=("more",),
             )
 
-        # Auto-select and focus the first entry
+        # Auto-select, focus and claim keyboard focus on the first entry
         first = next(iter(self._item_data), None)
         if first:
             self._tree.selection_set(first)
             self._tree.focus(first)
             self._tree.see(first)
+        self._tree.focus_set()   # always steal keyboard focus back to main frame
 
     def _load_more(self) -> None:
         if self._more_iid:
@@ -320,6 +325,49 @@ class MainFrame(ttk.Frame):
         if self.on_select_cb:
             sel_size = self.get_selection_size()
             self.on_select_cb(len(paths), sel_size)
+
+    def _on_up(self, event=None) -> str:
+        items = list(self._item_data)
+        if not items:
+            return "break"
+        sel = self._tree.selection()
+        current = sel[0] if sel else None
+        if not current or current == items[0]:
+            self._select_item(items[-1])          # wrap to last
+        else:
+            prev = self._tree.prev(current)
+            self._select_item(prev if prev in self._item_data else items[-1])
+        return "break"
+
+    def _on_down(self, event=None) -> str:
+        items = list(self._item_data)
+        if not items:
+            return "break"
+        sel = self._tree.selection()
+        current = sel[0] if sel else None
+        if not current or current == items[-1]:
+            self._select_item(items[0])           # wrap to first
+        else:
+            nxt = self._tree.next(current)
+            self._select_item(nxt if nxt in self._item_data else items[0])
+        return "break"
+
+    def _on_ctrl_up(self, event=None) -> str:
+        items = list(self._item_data)
+        if items:
+            self._select_item(items[0])
+        return "break"
+
+    def _on_ctrl_down(self, event=None) -> str:
+        items = list(self._item_data)
+        if items:
+            self._select_item(items[-1])
+        return "break"
+
+    def _select_item(self, iid: str) -> None:
+        self._tree.selection_set(iid)
+        self._tree.focus(iid)
+        self._tree.see(iid)
 
     def _go_up(self, event=None) -> str:
         if not self._current_path:

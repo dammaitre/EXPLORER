@@ -39,6 +39,7 @@ class LeftPanel(ttk.Frame):
         self._path_nodes: dict[str, str] = {}          # normcase(path) → iid
         self._loaded: set[str] = set()                 # iids whose children have been loaded
         self._current_iid: str | None = None
+        self.focus_back_cb = None                      # set by App after layout is built
 
         self._build()
         self._populate_roots()
@@ -219,6 +220,10 @@ class LeftPanel(ttk.Frame):
             else:
                 self._load_children(item)
                 self._tree.item(item, open=True)
+
+        # Return keyboard focus to the main frame so arrow keys keep working
+        if self.focus_back_cb:
+            self.focus_back_cb()
 
     def _on_double_click(self, event: tk.Event) -> str:
         """Double click: navigate to the directory."""
