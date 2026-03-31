@@ -160,7 +160,7 @@ def _apply_win11_style(root: tk.Tk) -> None:
 class App:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("BuildEx")
+        self.root.title("Pyxplorer")
         self.root.geometry("1200x700")
         self.root.minsize(800, 500)
 

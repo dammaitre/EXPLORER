@@ -1,4 +1,4 @@
-# BuildEx — Claude Code Agent Plan
+# Pyxplorer — Claude Code Agent Plan
 > Win11-style File Explorer for the Building Industry · Python + tkinter
 
 ---
@@ -18,7 +18,7 @@
 ## Project Structure
 
 ```
-buildex/
+pyxplorer/
 ├── main.py              # Entry point
 ├── app.py               # App class, root window, global keybindings
 ├── ui/
@@ -520,7 +520,7 @@ The agent must verify every item before considering the MVP complete.
 Start with a single session per phase to keep context manageable.
 
 **Session 1 — Scaffold + Long Path**
-> "Create the `buildex/` project structure as specified. Implement `core/longpath.py` with `normalize()`, `to_display()`, and `enable_longpath_registry()`. Then create `main.py` and `app.py` that open a blank resizable window with placeholder panels. Do not implement any real functionality yet."
+> "Create the `pyxplorer/` project structure as specified. Implement `core/longpath.py` with `normalize()`, `to_display()`, and `enable_longpath_registry()`. Then create `main.py` and `app.py` that open a blank resizable window with placeholder panels. Do not implement any real functionality yet."
 
 **Session 2 — Top bar + navigation state**
 > "Implement `ui/top_bar.py` and `state.py`. The top bar shows the current path (via `to_display()`), has an editable entry that navigates on Enter, and a dropdown of the last 10 paths. Wire `state.current_dir` so navigating updates it."

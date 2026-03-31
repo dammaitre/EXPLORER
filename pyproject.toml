@@ -8,4 +8,4 @@ name = "pyxplorer"
 version = "0.1.0"
 
 [project.scripts]
-pyxplorer = "buildex.main:main"
+pyxplorer = "pyxplorer.main:main"
