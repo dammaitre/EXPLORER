@@ -11,8 +11,8 @@
     "row_selected":    "#3D3D3D",
     "status_bg":       "#1C1C1C",
     "font_family":     "Segoe UI",
-    "font_size_base":  13,
-    "font_size_entry": 14,
+    "font_size_base":  15,
+    "font_size_entry": 16,
     "font_size_small": 12,
     "row_height":      36,
     "row_height_nav":  34

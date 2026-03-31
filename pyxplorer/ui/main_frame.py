@@ -25,11 +25,13 @@ _MAX_ROWS = 500  # Phase 10 cap: show first 500, then a "load more" sentinel
 
 class MainFrame(ttk.Frame):
     def __init__(self, parent, state, navigate_cb,
-                 on_select_cb: Callable | None = None):
+                 on_select_cb: Callable | None = None,
+                 icons: dict | None = None):
         super().__init__(parent, style="TFrame")
         self.state = state
         self.navigate_cb = navigate_cb
         self.on_select_cb = on_select_cb
+        self._icons = icons or {}
 
         self._current_path: str = ""
         self._item_data:  dict = {}   # iid  → row dict
@@ -71,6 +73,10 @@ class MainFrame(ttk.Frame):
             foreground=_TEXT_DIR,
             font=(_T["font_family"], _T["font_size_base"], "bold"))
         self._tree.tag_configure("file",    foreground=_TEXT)
+        # empty_dir: bold (like a dir) but muted colour — set after scan confirms size=0
+        self._tree.tag_configure("empty_dir",
+            foreground=_TEXT_DIM,
+            font=(_T["font_family"], _T["font_size_base"], "bold"))
         self._tree.tag_configure("empty",   foreground=_TEXT_DIM)
         self._tree.tag_configure("denied",  foreground=_DENIED)
         self._tree.tag_configure("more",    foreground=_ACCENT)
@@ -116,6 +122,13 @@ class MainFrame(ttk.Frame):
         except PermissionError:
             self._tree.insert("", "end", text="  \U0001f512  Access denied",
                               values=("", ""), tags=("denied",))
+            return
+        except FileNotFoundError:
+            # Directory was deleted or renamed while we were viewing it.
+            # Navigate up one level automatically (scheduled to avoid re-entrancy).
+            parent = str(Path(to_display(path)).parent)
+            if os.path.normcase(parent) != os.path.normcase(to_display(path)):
+                self.after(0, lambda p=parent: self.navigate_cb(p))
             return
         except OSError as exc:
             self._tree.insert("", "end", text=f"  Error: {exc}",
@@ -166,7 +179,10 @@ class MainFrame(ttk.Frame):
     # ------------------------------------------------------------------
 
     def update_item_size(self, path: str, size: int) -> None:
-        """Called by App._process_queue when a dir scan result arrives."""
+        """Called by App._process_queue when a dir scan result arrives.
+        size=-1 means the scanner skipped this path (e.g. network drive);
+        the row keeps showing '—'.
+        """
         key = os.path.normcase(path)
         iid = self._path_iids.get(key)
         if not iid:
@@ -174,20 +190,24 @@ class MainFrame(ttk.Frame):
         row = self._item_data.get(iid)
         if not row:
             return
+        if size < 0:
+            return   # network / skipped — leave '—' as-is
         row["size_bytes"] = size
         row["size_str"]   = fmt_size(size)
         self._tree.set(iid, "size", row["size_str"])
 
     def finalize_pct(self) -> None:
-        """Compute and display % column once the full scan is done."""
+        """Compute % column and dim empty dirs once the full scan is done."""
         total = self.get_total_size()
-        if total <= 0:
-            return
         for iid, row in self._item_data.items():
-            if row["size_bytes"] >= 0:
+            # % column
+            if total > 0 and row["size_bytes"] >= 0:
                 pct = row["size_bytes"] / total * 100
                 row["pct_str"] = f"{pct:.1f}%"
                 self._tree.set(iid, "pct", row["pct_str"])
+            # Dim empty dirs (size confirmed as 0 after scan; -1 = skipped/network)
+            if row["is_dir"] and row["size_bytes"] == 0 and row["tag"] == "dir":
+                self._tree.item(iid, tags=("empty_dir",))
 
     # ------------------------------------------------------------------
     # Public API — query helpers
@@ -228,9 +248,11 @@ class MainFrame(ttk.Frame):
         self._hidden_rows = sorted_rows[_MAX_ROWS:]
 
         for row in visible:
+            img = self._icons.get("folder" if row["is_dir"] else "file")
             iid = self._tree.insert(
                 "", "end",
                 text=f"  {row['name']}",
+                image=img or "",
                 values=(row["size_str"], row["pct_str"]),
                 tags=(row["tag"],),
             )
@@ -241,6 +263,7 @@ class MainFrame(ttk.Frame):
             self._more_iid = self._tree.insert(
                 "", "end",
                 text=f"  … {len(self._hidden_rows)} more items — click to load",
+                image="",
                 values=("", ""),
                 tags=("more",),
             )
@@ -258,9 +281,11 @@ class MainFrame(ttk.Frame):
             self._tree.delete(self._more_iid)
             self._more_iid = None
         for row in self._hidden_rows:
+            img = self._icons.get("folder" if row["is_dir"] else "file")
             iid = self._tree.insert(
                 "", "end",
                 text=f"  {row['name']}",
+                image=img or "",
                 values=(row["size_str"], row["pct_str"]),
                 tags=(row["tag"],),
             )

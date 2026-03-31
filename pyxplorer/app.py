@@ -10,6 +10,7 @@ from tkinter import ttk
 from .state import AppState
 from .core.longpath import normalize, enable_longpath_registry
 from .core.scanner import SizeScanner, CancelToken
+from .ui import icons as _icons_mod
 from .ui.top_bar import TopBar
 from .ui.left_panel import LeftPanel
 from .ui.main_frame import MainFrame
@@ -180,6 +181,9 @@ class App:
 
         self.state = AppState()
 
+        # Icons (Pillow-generated; values are None when Pillow is absent)
+        self._icons = _icons_mod.load(self.root)
+
         # Async scanner
         self._scan_queue: queue.Queue = queue.Queue()
         self._scanner:    SizeScanner = SizeScanner(self._scan_queue)
@@ -216,7 +220,8 @@ class App:
         self.paned.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         self.left_panel = LeftPanel(
-            self.paned, self.state, navigate_cb=self._navigate
+            self.paned, self.state, navigate_cb=self._navigate,
+            icons=self._icons,
         )
         self.paned.add(self.left_panel, width=220, minsize=100)
 
@@ -224,6 +229,7 @@ class App:
             self.paned, self.state,
             navigate_cb=self._navigate,
             on_select_cb=self._on_selection_change,
+            icons=self._icons,
         )
         self.paned.add(self.main_frame, minsize=400)
 

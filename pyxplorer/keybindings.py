@@ -11,6 +11,7 @@ from tkinter import ttk, messagebox
 
 from .core.longpath import normalize, to_display
 from .core.fs import copy_items, move_items, make_dir, delete_items
+from .ui.search_dialog import SearchDialog
 from .settings import THEME as _T
 
 _FONT = _T["font_family"]
@@ -39,12 +40,19 @@ def _do_cut(state) -> None:
         state.clipboard = {"mode": "cut", "paths": list(state.selection)}
 
 
+_paste_busy = False   # simple re-entrancy guard (robocopy is synchronous)
+
+
 def _do_paste(state, root: tk.Tk, refresh_cb) -> None:
+    global _paste_busy
+    if _paste_busy:
+        return
     mode  = state.clipboard.get("mode")
     paths = state.clipboard.get("paths", [])
     if not mode or not paths:
         return
     dst = state.current_dir
+    _paste_busy = True
     try:
         if mode == "copy":
             copy_items(paths, dst)
@@ -53,6 +61,8 @@ def _do_paste(state, root: tk.Tk, refresh_cb) -> None:
             state.clipboard = {"mode": None, "paths": []}
     except Exception as exc:
         messagebox.showerror("Paste error", str(exc), parent=root)
+    finally:
+        _paste_busy = False
     refresh_cb()
 
 
@@ -140,18 +150,6 @@ def open_terminal(current_dir: str) -> None:
                 continue
 
 
-# ── Search stub (replaced in Phase 7) ─────────────────────────────────────────
-
-def _search_stub(root: tk.Tk) -> None:
-    dlg = tk.Toplevel(root)
-    dlg.title("Search")
-    dlg.geometry("320x80")
-    dlg.resizable(False, False)
-    ttk.Label(dlg, text="Regex search — coming in Phase 7",
-              font=(_FONT, _SZ), padding=22).pack()
-    dlg.grab_set()
-
-
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 def bind_keys(root: tk.Tk, state, top_bar, main_frame) -> None:
@@ -180,7 +178,20 @@ def bind_keys(root: tk.Tk, state, top_bar, main_frame) -> None:
     root.bind("<Control-r>", lambda e: top_bar.open_run_dialog())
 
     # ── Regex search (Ctrl+F) ──────────────────────────────────────────
-    root.bind("<Control-f>", _guard(lambda: _search_stub(root)))
+    # Keep a single dialog instance; re-raise if already open.
+    _search_holder: list[SearchDialog] = []
+
+    def _open_search():
+        if _search_holder and _search_holder[0].alive:
+            _search_holder[0].lift()
+        else:
+            dlg = SearchDialog(root, state, navigate_cb=main_frame.navigate_cb)
+            if _search_holder:
+                _search_holder[0] = dlg
+            else:
+                _search_holder.append(dlg)
+
+    root.bind("<Control-f>", _guard(_open_search))
 
     # ── Delete (Suppr) ─────────────────────────────────────────────────
     def _do_delete():

@@ -30,10 +30,11 @@ _DUMMY = "\x00dummy"   # sentinel text that identifies placeholder children
 
 
 class LeftPanel(ttk.Frame):
-    def __init__(self, parent, state, navigate_cb):
+    def __init__(self, parent, state, navigate_cb, icons: dict | None = None):
         super().__init__(parent, style="LeftPanel.TFrame")
         self.state = state
         self.navigate_cb = navigate_cb
+        self._icons = icons or {}
 
         self._node_paths: dict[str, str | None] = {}  # iid  → absolute path (None = dummy)
         self._path_nodes: dict[str, str] = {}          # normcase(path) → iid
@@ -124,7 +125,10 @@ class LeftPanel(ttk.Frame):
 
     def _insert_node(self, parent: str, path: str, label: str,
                      tags: tuple = ("dir",)) -> str:
-        iid = self._tree.insert(parent, "end", text=label, tags=tags)
+        img_key = "drive" if "drive" in tags else "folder"
+        img = self._icons.get(img_key)
+        iid = self._tree.insert(parent, "end", text=label,
+                                image=img or "", tags=tags)
         self._node_paths[iid] = path
         self._path_nodes[self._key(path)] = iid
         return iid
