@@ -1,0 +1,25 @@
+{
+  "theme": {
+    "bg":              "#202020",
+    "bg_dark":         "#161616",
+    "bg_entry":        "#2D2D2D",
+    "accent":          "#60CDFF",
+    "text":            "#F3F3F3",
+    "text_mute":       "#9D9D9D",
+    "border":          "#3A3A3A",
+    "row_hover":       "#2A2A2A",
+    "row_selected":    "#3D3D3D",
+    "status_bg":       "#1C1C1C",
+    "font_family":     "Segoe UI",
+    "font_size_base":  13,
+    "font_size_entry": 14,
+    "font_size_small": 12,
+    "row_height":      36,
+    "row_height_nav":  34
+  },
+  "start_dirs": [
+    "~",
+    "D:\\",
+    "R:\\P013926_OTI_CDGX\\"
+  ]
+}
