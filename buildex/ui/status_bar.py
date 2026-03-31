@@ -4,8 +4,8 @@ Phase 5 — Status bar: animated scan spinner, item count, selection weight.
 import tkinter as tk
 from tkinter import ttk
 
-from settings import THEME as _T
-from core.fs import fmt_size
+from ..settings import THEME as _T
+from ..core.fs import fmt_size
 
 _BG       = _T["status_bg"]
 _TEXT     = _T["text"]

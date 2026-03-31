@@ -7,15 +7,15 @@ import queue
 import tkinter as tk
 from tkinter import ttk
 
-from state import AppState
-from core.longpath import normalize, enable_longpath_registry
-from core.scanner import SizeScanner, CancelToken
-from ui.top_bar import TopBar
-from ui.left_panel import LeftPanel
-from ui.main_frame import MainFrame
-from ui.status_bar import StatusBar
-from keybindings import bind_keys
-from settings import THEME as _T
+from .state import AppState
+from .core.longpath import normalize, enable_longpath_registry
+from .core.scanner import SizeScanner, CancelToken
+from .ui.top_bar import TopBar
+from .ui.left_panel import LeftPanel
+from .ui.main_frame import MainFrame
+from .ui.status_bar import StatusBar
+from .keybindings import bind_keys
+from .settings import THEME as _T
 
 # ── Palette & font vars (sourced from settings.json) ──────────────────────────
 BG        = _T["bg"]

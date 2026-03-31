@@ -1,6 +1,6 @@
 import os
 import collections
-from core.longpath import normalize
+from .core.longpath import normalize
 
 
 class AppState:

@@ -4,7 +4,7 @@ Async recursive size scanner with cancellation support.
 import os
 import queue
 import threading
-from core.longpath import normalize
+from .longpath import normalize
 
 
 class CancelToken:

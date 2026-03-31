@@ -8,9 +8,9 @@ from tkinter import ttk
 from pathlib import Path
 from typing import Callable
 
-from core.longpath import normalize, to_display
-from core.fs import fmt_size
-from settings import THEME as _T
+from ..core.longpath import normalize, to_display
+from ..core.fs import fmt_size
+from ..settings import THEME as _T
 
 _BG       = _T["bg"]
 _TEXT     = _T["text"]

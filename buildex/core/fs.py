@@ -7,7 +7,7 @@ import sys
 import shutil
 import subprocess
 from pathlib import Path
-from core.longpath import normalize, to_display
+from .longpath import normalize, to_display
 
 
 def list_dir(path: str) -> list[os.DirEntry]:

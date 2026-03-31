@@ -9,9 +9,9 @@ import subprocess
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from core.longpath import normalize, to_display
-from core.fs import copy_items, move_items, make_dir, delete_items
-from settings import THEME as _T
+from .core.longpath import normalize, to_display
+from .core.fs import copy_items, move_items, make_dir, delete_items
+from .settings import THEME as _T
 
 _FONT = _T["font_family"]
 _SZ   = _T["font_size_base"]

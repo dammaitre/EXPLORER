@@ -13,8 +13,8 @@ import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
 
-from core.longpath import normalize, to_display
-from settings import THEME as _T, START_DIRS
+from ..core.longpath import normalize, to_display
+from ..settings import THEME as _T, START_DIRS
 
 _BG_PANEL  = _T["bg_dark"]
 _BG_CURR   = _T["bg_entry"]

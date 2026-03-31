@@ -4,7 +4,7 @@ Regex search across file/dir names. Stub — Phase 7 will wire this to the UI.
 import os
 import re
 import queue
-from core.longpath import normalize
+from .longpath import normalize
 
 
 def search_names(root_dir: str, pattern: str, result_queue: queue.Queue, token) -> None:

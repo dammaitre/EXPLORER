@@ -7,8 +7,8 @@ import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
 
-from core.longpath import normalize, to_display
-from settings import THEME as _T
+from ..core.longpath import normalize, to_display
+from ..settings import THEME as _T
 
 _BG        = _T["bg"]
 _BG_ENTRY  = _T["bg_entry"]
