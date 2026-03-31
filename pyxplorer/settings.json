@@ -18,8 +18,9 @@
     "row_height_nav":  34
   },
   "start_dirs": [
+    "R:\\P013926_OTI_CDGX\\",
     "~",
-    "D:\\",
-    "R:\\P013926_OTI_CDGX\\"
-  ]
+    "D:\\"
+  ],
+  "ext_skipped": [".db"]
 }

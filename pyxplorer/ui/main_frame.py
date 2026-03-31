@@ -3,6 +3,8 @@ Phase 3 — Main frame: directory listing with Name / Size / % columns.
 Phase 5 — update_item_size / finalize_pct wired to async scanner.
 """
 import os
+import sys
+import subprocess
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
@@ -10,7 +12,7 @@ from typing import Callable
 
 from ..core.longpath import normalize, to_display
 from ..core.fs import fmt_size
-from ..settings import THEME as _T
+from ..settings import THEME as _T, EXT_SKIPPED
 
 _BG       = _T["bg"]
 _TEXT     = _T["text"]
@@ -41,6 +43,7 @@ class MainFrame(ttk.Frame):
         self._sort_asc:   bool = True
         self._hidden_rows: list = []
         self._more_iid:   str | None = None
+        self._pending_select: str | None = None   # path to pre-select after next render
 
         self._build()
 
@@ -93,12 +96,13 @@ class MainFrame(ttk.Frame):
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
         self._tree.bind("<Left>",             self._go_up)
         self._tree.bind("<BackSpace>",        self._go_up)
-        self._tree.bind("<Right>",            self._open_selected)
-        self._tree.bind("<Return>",           self._open_selected)
+        self._tree.bind("<Right>",            self._open_selected)   # dirs only
+        self._tree.bind("<Return>",           self._on_return_key)   # dirs + files
         self._tree.bind("<Up>",               self._on_up)
         self._tree.bind("<Down>",             self._on_down)
         self._tree.bind("<Control-Up>",       self._on_ctrl_up)
         self._tree.bind("<Control-Down>",     self._on_ctrl_down)
+        self._tree.bind("<Button-2>",         self._on_middle_click)
 
     # ------------------------------------------------------------------
     # Public API — navigation
@@ -157,6 +161,9 @@ class MainFrame(ttk.Frame):
             })
 
         for entry in files:
+            if EXT_SKIPPED and \
+                    os.path.splitext(entry.name)[1].lower() in EXT_SKIPPED:
+                continue
             try:
                 size = entry.stat(follow_symlinks=False).st_size
                 size_str = fmt_size(size)
@@ -268,12 +275,18 @@ class MainFrame(ttk.Frame):
                 tags=("more",),
             )
 
-        # Auto-select, focus and claim keyboard focus on the first entry
-        first = next(iter(self._item_data), None)
-        if first:
-            self._tree.selection_set(first)
-            self._tree.focus(first)
-            self._tree.see(first)
+        # Auto-select: prefer _pending_select (set by _go_up), fall back to first item
+        target_iid = None
+        if self._pending_select:
+            key = os.path.normcase(normalize(self._pending_select))
+            target_iid = self._path_iids.get(key)
+            self._pending_select = None
+        if not target_iid:
+            target_iid = next(iter(self._item_data), None)
+        if target_iid:
+            self._tree.selection_set(target_iid)
+            self._tree.focus(target_iid)
+            self._tree.see(target_iid)
         self._tree.focus_set()   # always steal keyboard focus back to main frame
 
     def _load_more(self) -> None:
@@ -339,6 +352,8 @@ class MainFrame(ttk.Frame):
         row = self._item_data.get(item)
         if row and row["is_dir"]:
             self.navigate_cb(row["path"])
+        elif row and not row["is_dir"]:
+            self._open_file(row["path"])
 
     def _on_select(self, event=None) -> None:
         paths = []
@@ -397,15 +412,61 @@ class MainFrame(ttk.Frame):
     def _go_up(self, event=None) -> str:
         if not self._current_path:
             return "break"
-        parent = str(Path(to_display(self._current_path)).parent)
-        if os.path.normcase(parent) != os.path.normcase(to_display(self._current_path)):
+        display = to_display(self._current_path)
+        parent = str(Path(display).parent)
+        if os.path.normcase(parent) != os.path.normcase(display):
+            self._pending_select = self._current_path   # re-select where we came from
             self.navigate_cb(parent)
         return "break"
 
     def _open_selected(self, event=None) -> str:
+        """Right arrow — navigate into selected directory only."""
         sel = self._tree.selection()
         if sel:
             row = self._item_data.get(sel[0])
             if row and row["is_dir"]:
                 self.navigate_cb(row["path"])
         return "break"
+
+    def _on_return_key(self, event=None) -> str:
+        """Enter — navigate into directory OR open file with the OS default app."""
+        sel = self._tree.selection()
+        if sel:
+            row = self._item_data.get(sel[0])
+            if row:
+                if row["is_dir"]:
+                    self.navigate_cb(row["path"])
+                else:
+                    self._open_file(row["path"])
+        return "break"
+
+    def _open_file(self, path: str) -> None:
+        """Open a file with the OS default application (like double-clicking in Explorer)."""
+        try:
+            os.startfile(normalize(path))
+        except AttributeError:
+            # os.startfile is Windows-only; fall back to xdg-open / open on other platforms
+            try:
+                cmd = "open" if sys.platform == "darwin" else "xdg-open"
+                subprocess.Popen([cmd, to_display(path)])
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _on_middle_click(self, event: tk.Event) -> None:
+        """Middle mouse button on a directory — open a new Pyxplorer window there."""
+        item = self._tree.identify_row(event.y)
+        if not item:
+            return
+        row = self._item_data.get(item)
+        if not (row and row["is_dir"]):
+            return
+        target = to_display(row["path"])
+        kwargs: dict = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        subprocess.Popen(
+            [sys.executable, "-m", "pyxplorer", target],
+            **kwargs,
+        )

@@ -159,8 +159,14 @@ def _apply_win11_style(root: tk.Tk) -> None:
 
 
 class App:
-    def __init__(self):
+    def __init__(self, start_path: str | None = None):
         self.root = tk.Tk()
+        # Resolve start_path early; store None if invalid so layout can ignore it
+        if start_path:
+            _norm = normalize(start_path)
+            self._start_path: str | None = _norm if os.path.isdir(_norm) else None
+        else:
+            self._start_path = None
         self.root.title("Pyxplorer")
         self.root.geometry("1200x700")
         self.root.minsize(800, 500)
@@ -179,7 +185,7 @@ class App:
         # Long-path registry fix (silent — no admin prompt at this stage)
         enable_longpath_registry()
 
-        self.state = AppState()
+        self.state = AppState(start_path=self._start_path)
 
         # Icons (Pillow-generated; values are None when Pillow is absent)
         self._icons = _icons_mod.load(self.root)
@@ -219,9 +225,10 @@ class App:
         )
         self.paned.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
+        extra = [self._start_path] if self._start_path else []
         self.left_panel = LeftPanel(
             self.paned, self.state, navigate_cb=self._navigate,
-            icons=self._icons,
+            icons=self._icons, extra_start_dirs=extra,
         )
         self.paned.add(self.left_panel, width=220, minsize=100)
 

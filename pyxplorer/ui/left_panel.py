@@ -30,11 +30,14 @@ _DUMMY = "\x00dummy"   # sentinel text that identifies placeholder children
 
 
 class LeftPanel(ttk.Frame):
-    def __init__(self, parent, state, navigate_cb, icons: dict | None = None):
+    def __init__(self, parent, state, navigate_cb,
+                 icons: dict | None = None,
+                 extra_start_dirs: list[str] | None = None):
         super().__init__(parent, style="LeftPanel.TFrame")
         self.state = state
         self.navigate_cb = navigate_cb
         self._icons = icons or {}
+        self._extra_start_dirs: list[str] = extra_start_dirs or []
 
         self._node_paths: dict[str, str | None] = {}  # iid  → absolute path (None = dummy)
         self._path_nodes: dict[str, str] = {}          # normcase(path) → iid
@@ -99,7 +102,12 @@ class LeftPanel(ttk.Frame):
     # ------------------------------------------------------------------
 
     def _populate_roots(self) -> None:
-        valid_start = [p for p in START_DIRS if os.path.isdir(normalize(p))]
+        # Extra dirs from CLI arg come first; deduplicate against settings START_DIRS
+        extra_keys = {os.path.normcase(normalize(p)) for p in self._extra_start_dirs}
+        settings_dirs = [p for p in START_DIRS
+                         if os.path.normcase(normalize(p)) not in extra_keys]
+        combined = self._extra_start_dirs + settings_dirs
+        valid_start = [p for p in combined if os.path.isdir(normalize(p))]
 
         if valid_start:
             for path in valid_start:

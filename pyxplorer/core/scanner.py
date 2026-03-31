@@ -1,15 +1,25 @@
 """
 Async recursive size scanner with cancellation support.
 
-Phase 10 additions:
-- Symlink directories are NOT recursed to avoid infinite loops.
-- Network / UNC paths are skipped (scan emits size=-1 so the row stays "—").
+Symlink / junction-point policy (Windows):
+- is_dir(follow_symlinks=False) == True  →  regular dirs AND NTFS junction points.
+  Both are recursed; junction points do not create cycles in typical share layouts.
+- is_dir(follow_symlinks=False) == False, is_symlink() == True  →  NTFS symlink-to-dir.
+  These ARE skipped to prevent infinite recursion.
+- is_file(follow_symlinks=False) == True  →  regular files (not symlinks).
+- is_symlink() == True, is_file(follow_symlinks=True) == True  →  symlink to file.
+  The target's size is counted.
+
+Network policy:
+- Only raw UNC paths (\\server\share\...) are skipped.
+- Mapped drive letters (R:\, S:\, …) are scanned normally — the user has
+  explicitly added them to start_dirs and expects sizes to be computed.
 """
 import os
-import sys
 import queue
 import threading
 from .longpath import normalize, to_display
+from ..settings import EXT_SKIPPED
 
 
 class CancelToken:
@@ -26,23 +36,11 @@ class CancelToken:
 
 def _is_network(path: str) -> bool:
     """
-    Return True when path lives on a network or UNC location.
-    Recursive size scanning on these can block for a long time.
+    Return True only for raw UNC paths (\\server\share\...).
+    Mapped drive letters are NOT flagged — they are user-configured and
+    the scanner is expected to work on them.
     """
-    display = to_display(path)
-    # UNC paths always start with \\
-    if display.startswith("\\\\"):
-        return True
-    # On Windows, check the drive type via the kernel API
-    if sys.platform == "win32" and len(display) >= 2 and display[1] == ":":
-        try:
-            import ctypes
-            DRIVE_REMOTE = 4
-            drive = display[:3]  # e.g. "R:\\"
-            return ctypes.windll.kernel32.GetDriveTypeW(drive) == DRIVE_REMOTE
-        except Exception:
-            pass
-    return False
+    return to_display(path).startswith("\\\\")
 
 
 class SizeScanner:
@@ -65,7 +63,7 @@ class SizeScanner:
         """
         Scan every path in subdir_paths sequentially in one daemon thread.
         Emits ("size_result", path, size) for each, then ("scan_complete", parent_path).
-        Network paths are skipped (emits size=-1 so the row stays "—").
+        True UNC paths are skipped (emits size=-1 so the row stays "—").
         Sequential scan avoids thread-explosion on wide directories.
         """
         t = threading.Thread(
@@ -94,7 +92,7 @@ class SizeScanner:
             if token.cancelled:
                 return
             if _is_network(path):
-                # Emit -1 so the row keeps showing "—" (network size unknown)
+                # True UNC path — emit -1 so the row keeps showing "—"
                 self.q.put(("size_result", path, -1))
                 continue
             size = self._dir_size(path, token)
@@ -105,7 +103,7 @@ class SizeScanner:
 
     def _single_worker(self, path: str, token: CancelToken) -> None:
         if _is_network(path):
-            return   # left panel node stays without size annotation
+            return
         size = self._dir_size(path, token)
         if not token.cancelled:
             self.q.put(("size_result", path, size))
@@ -121,19 +119,25 @@ class SizeScanner:
                 if token.cancelled:
                     return 0
                 try:
-                    if entry.is_symlink():
-                        # Count symlink target size for files but NEVER recurse
-                        # into symlink directories — avoids infinite loops.
-                        if entry.is_file(follow_symlinks=True):
+                    if entry.is_dir(follow_symlinks=False):
+                        # Regular directories AND NTFS junction points.
+                        # follow_symlinks=False means NTFS symlinks-to-dirs evaluate
+                        # to False here, so they are NOT recursed (cycle prevention).
+                        total += self._dir_size(entry.path, token)
+                    elif entry.is_file(follow_symlinks=False):
+                        # Regular file (not a symlink) — skip filtered extensions.
+                        if not EXT_SKIPPED or \
+                                os.path.splitext(entry.name)[1].lower() not in EXT_SKIPPED:
+                            total += entry.stat().st_size
+                    elif entry.is_symlink() and entry.is_file(follow_symlinks=True):
+                        # Symlink pointing to a file — same extension filter applies.
+                        if not EXT_SKIPPED or \
+                                os.path.splitext(entry.name)[1].lower() not in EXT_SKIPPED:
                             try:
                                 total += entry.stat(follow_symlinks=True).st_size
                             except OSError:
                                 pass
-                        # symlink dirs: skip (size contribution unknown / risk of loop)
-                    elif entry.is_file(follow_symlinks=False):
-                        total += entry.stat().st_size
-                    elif entry.is_dir(follow_symlinks=False):
-                        total += self._dir_size(entry.path, token)
+                    # Anything else (symlink-to-dir, unknown type) is skipped.
                 except (PermissionError, OSError):
                     pass
         except (PermissionError, OSError):

@@ -9,10 +9,12 @@ Stack: Python 3.12 + tkinter/ttk, dark theme, Pillow icons, no external UI deps.
 
 ```bash
 # From the repo root (editable install already in place via pyproject.toml)
-python -m pyxplorer
+python -m pyxplorer               # opens at first start_dirs entry
+python -m pyxplorer "R:\Projects" # opens at specified path (also pinned in left panel)
 
 # Or via the installed script
 pyxplorer
+pyxplorer "R:\Projects"
 ```
 
 Requires Python 3.12+. Pillow is an optional dependency (icons degrade gracefully without it):
@@ -26,10 +28,10 @@ pip install Pillow
 
 ```
 pyxplorer/
-├── main.py              # Entry point: calls App().run()
+├── main.py              # Entry point: argparse PATH argument, calls App(start_path).run()
 ├── app.py               # Root Tk window, ttk styling, layout, navigation controller
-├── settings.json        # All theme colours + start_dirs (edit this, not settings.py)
-├── settings.py          # Loads settings.json, exports THEME: dict and START_DIRS: list
+├── settings.json        # All theme colours, start_dirs, ext_skipped (edit this, not settings.py)
+├── settings.py          # Loads settings.json, exports THEME / START_DIRS / EXT_SKIPPED
 ├── state.py             # AppState: current_dir, nav_history, clipboard, selection
 ├── keybindings.py       # All global keyboard shortcuts (bound on root Tk window)
 ├── core/
@@ -85,6 +87,10 @@ Do not duplicate values across files.
 Size scanning runs in a daemon thread (`core/scanner.py`). Results are pushed onto a `queue.Queue` and consumed by `App._process_queue()` via `root.after(100, ...)`.  
 Never call a long-running filesystem operation on the main thread (exception: robocopy paste is currently synchronous — acceptable for MVP).
 
+### 6. Extension filtering applies everywhere
+
+`EXT_SKIPPED` (from `settings.py`) must be checked in both the scanner (`_dir_size`) and the main frame listing (`load_dir`). Files matching skipped extensions must be invisible in the UI and excluded from all size computations.
+
 ---
 
 ## Key patterns
@@ -105,6 +111,13 @@ App._navigate(path)
 
 Never call `main_frame.load_dir()` or `left_panel.load_dir()` directly — always go through `App._navigate()`.
 
+### Startup directory
+
+`AppState.__init__` resolves the starting directory in this order:
+1. `start_path` argument (from `pyxplorer PATH` CLI)
+2. First valid entry in `START_DIRS` (from `settings.json`)
+3. `~` (fallback)
+
 ### Async size scanner
 
 ```python
@@ -116,12 +129,12 @@ scanner.scan_items(parent_path, subdir_dirs, token)
 token.cancel()
 
 # Results arrive as queue messages:
-# ("size_result",   item_path, bytes)   — bytes == -1 for network/skipped
+# ("size_result",   item_path, bytes)   — bytes == -1 for UNC/skipped
 # ("scan_complete", parent_path)
 ```
 
-Network and UNC paths are detected and skipped (size stays `—`).  
-Symlink directories are never recursed (avoids infinite loops).
+Only raw UNC paths (`\\server\share\...`) are skipped. Mapped network drives (`R:\`, `S:\` etc.) are scanned normally.  
+`is_dir(follow_symlinks=False)` is used as the recursion gate — this correctly includes NTFS junction points and excludes NTFS symlinks-to-dirs.
 
 ### Left panel — lazy loading
 
@@ -136,6 +149,10 @@ Single-click on the left panel calls `self.focus_back_cb()` (wired in `app.py` a
 ### `_guard(fn)` in keybindings
 
 Clipboard shortcuts (`Ctrl+C/X/V`) are wrapped in `_guard()` which silently no-ops when a text entry has focus, preventing conflicts while the user types in the path bar or search dialog.
+
+### Go-up selection memory
+
+`main_frame._go_up()` stores `_pending_select = current_path` before navigating up. `_render_rows()` checks this field first and pre-selects the child that was previously the current directory, so the user always lands back where they came from.
 
 ---
 
@@ -161,13 +178,19 @@ Clipboard shortcuts (`Ctrl+C/X/V`) are wrapped in `_guard()` which silently no-o
     "row_height":      36,          // main frame row height (px)
     "row_height_nav":  34           // left panel row height (px)
   },
-  "start_dirs": [                   // roots shown in left panel (instead of all drives)
+  "start_dirs": [                   // roots shown in left panel; first entry = startup dir
+    "R:\\P013926_OTI_CDGX\\",
     "~",
-    "D:\\",
-    "R:\\P013926_OTI_CDGX\\"
-  ]
+    "D:\\"
+  ],
+  "ext_skipped": [".db"]           // extensions hidden from listing AND excluded from sizes
 }
 ```
+
+`ext_skipped` normalisation rules (handled in `settings.py`):
+- Case-insensitive: `".TMP"` → `".tmp"`
+- Leading dot optional: `"tmp"` → `".tmp"`
+- Duplicates removed automatically
 
 ---
 
@@ -198,6 +221,8 @@ Clipboard shortcuts (`Ctrl+C/X/V`) are wrapped in `_guard()` which silently no-o
 
 ## Keyboard shortcuts
 
+### Main frame
+
 | Shortcut | Action |
 |---|---|
 | `Ctrl+C` | Copy selected items to file clipboard |
@@ -209,11 +234,25 @@ Clipboard shortcuts (`Ctrl+C/X/V`) are wrapped in `_guard()` which silently no-o
 | `Ctrl+F` | Open regex search dialog |
 | `Ctrl+Alt+T` | Open terminal in current directory |
 | `Delete` | Permanently delete selected items (confirm dialog) |
-| `←` / `Backspace` | Go up one level |
-| `→` / `Enter` | Open selected directory |
+| `←` / `Backspace` | Go up one level (re-selects the dir you came from) |
+| `→` | Open selected directory |
+| `Enter` | Open selected directory or file (OS default app) |
 | `↑` / `↓` | Move selection (wraps around) |
 | `Ctrl+↑` | Jump to first item |
 | `Ctrl+↓` | Jump to last item |
+| Left click on file | Open with OS default app |
+| Left click on dir | Navigate into directory |
+| Middle click on dir | Open new Pyxplorer window at that directory |
+
+### Search dialog (`Ctrl+F`)
+
+| Interaction | Action |
+|---|---|
+| Left click on file result | Open file with OS default app |
+| Left click on dir result | Navigate main frame into that directory |
+| Double-click / Enter | Same as left click |
+| Middle click on any result | Navigate main frame to the result's parent directory |
+| `Ctrl+Shift+C` | Copy absolute path of focused result to system clipboard |
 
 ---
 

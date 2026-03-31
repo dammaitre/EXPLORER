@@ -7,7 +7,9 @@ size scanner. Results stream in via a queue polled every 100 ms.
 """
 import os
 import re
+import sys
 import queue
+import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -124,8 +126,13 @@ class SearchDialog:
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self._tree.bind("<Double-1>",  self._on_double_click)
-        self._tree.bind("<Return>",    self._on_double_click)
+        self._tree.bind("<ButtonRelease-1>", self._on_left_click)
+        self._tree.bind("<Button-2>",        self._on_middle_click)
+        self._tree.bind("<Double-1>",        self._on_double_click)
+        self._tree.bind("<Return>",          self._on_double_click)
+        # Ctrl+Shift+C: capital C in tkinter means Shift is held
+        self._tree.bind("<Control-C>",       self._on_copy_path)
+        self._dlg.bind("<Control-C>",        self._on_copy_path)
 
         self._entry.focus_set()
 
@@ -222,29 +229,92 @@ class SearchDialog:
         self._schedule_poll()
 
     # ------------------------------------------------------------------
-    # Double-click / Enter: navigate to result
+    # Result interaction helpers
     # ------------------------------------------------------------------
 
-    def _on_double_click(self, event=None) -> None:
-        iid = self._tree.focus()
-        if not iid:
-            return
+    def _result_paths(self, iid: str) -> tuple[str, str, str] | None:
+        """
+        Return (full_path, parent_dir, ftype) for a treeview row, or None.
+        full_path  — absolute path to the file or directory
+        parent_dir — directory that contains it
+        ftype      — "dir" | "file"
+        """
         values = self._tree.item(iid, "values")
         if not values:
-            return
+            return None
         name, rel, ftype = values
+        root_dir  = to_display(self._state.current_dir)
+        full_path = os.path.normpath(os.path.join(root_dir, rel))
+        parent    = os.path.dirname(full_path)
+        return full_path, parent, ftype
 
-        # Reconstruct absolute path: current_dir at time of search + rel path
-        root_dir   = to_display(self._state.current_dir)
-        full_path  = os.path.normpath(os.path.join(root_dir, rel))
+    def _focused_iid(self) -> str | None:
+        iid = self._tree.focus()
+        return iid if iid else None
 
+    # Left click — open file with OS default app / navigate into dir
+    def _on_left_click(self, event: tk.Event) -> None:
+        iid = self._tree.identify_row(event.y)
+        if not iid:
+            return
+        result = self._result_paths(iid)
+        if not result:
+            return
+        full_path, parent, ftype = result
         if ftype == "dir":
-            target = full_path
+            self._navigate_cb(full_path)
+            self._dlg.lift()
         else:
-            target = os.path.dirname(full_path)
+            self._open_file(full_path)
 
-        self._navigate_cb(target)
-        self._dlg.lift()   # keep search window on top after navigation
+    # Middle click — navigate to the parent directory of the result
+    def _on_middle_click(self, event: tk.Event) -> None:
+        iid = self._tree.identify_row(event.y)
+        if not iid:
+            return
+        result = self._result_paths(iid)
+        if not result:
+            return
+        _, parent, _ = result
+        self._navigate_cb(parent)
+        self._dlg.lift()
+
+    # Double-click / Enter — same as before: navigate (to dir or file's parent)
+    def _on_double_click(self, event=None) -> None:
+        iid = self._focused_iid()
+        if not iid:
+            return
+        result = self._result_paths(iid)
+        if not result:
+            return
+        full_path, parent, ftype = result
+        self._navigate_cb(full_path if ftype == "dir" else parent)
+        self._dlg.lift()
+
+    # Ctrl+Shift+C — copy absolute path(s) to OS clipboard
+    def _on_copy_path(self, event=None) -> None:
+        iid = self._focused_iid()
+        if not iid:
+            return
+        result = self._result_paths(iid)
+        if not result:
+            return
+        full_path, _, _ = result
+        self._root.clipboard_clear()
+        self._root.clipboard_append(full_path)
+
+    # Open a file with the OS default application
+    def _open_file(self, path: str) -> None:
+        try:
+            os.startfile(normalize(path))
+        except AttributeError:
+            try:
+                cmd = "open" if sys.platform == "darwin" else "xdg-open"
+                subprocess.Popen([cmd, path])
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Cleanup

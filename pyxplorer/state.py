@@ -1,11 +1,19 @@
 import os
 import collections
 from .core.longpath import normalize
+from .settings import START_DIRS
 
 
 class AppState:
-    def __init__(self):
-        start = os.path.expanduser("~")
+    def __init__(self, start_path: str | None = None):
+        if start_path and os.path.isdir(normalize(start_path)):
+            start = start_path
+        else:
+            # Default to first valid start_dirs entry, then fall back to ~
+            start = next(
+                (p for p in START_DIRS if os.path.isdir(normalize(p))),
+                os.path.expanduser("~"),
+            )
         self.current_dir: str = normalize(start)
         self.nav_history: collections.deque = collections.deque(maxlen=10)
         # clipboard: {"mode": "copy"|"cut"|None, "paths": [...]}

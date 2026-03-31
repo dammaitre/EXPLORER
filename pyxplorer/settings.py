@@ -9,6 +9,7 @@ from pathlib import Path
 _SETTINGS_FILE = Path(__file__).parent / "settings.json"
 
 _DEFAULTS: dict = {
+    "ext_skipped": [],
     "theme": {
         "bg":              "#202020",
         "bg_dark":         "#161616",
@@ -47,10 +48,17 @@ def _load() -> dict:
         for p in raw.get("start_dirs", _DEFAULTS["start_dirs"])
         if isinstance(p, str)
     ]
-    return {"theme": theme, "start_dirs": start_dirs}
+    # Normalise extensions: lowercase, ensure leading dot, deduplicate
+    ext_skipped: set[str] = set()
+    for e in raw.get("ext_skipped", _DEFAULTS["ext_skipped"]):
+        if isinstance(e, str) and e:
+            e = e.lower().strip()
+            ext_skipped.add(e if e.startswith(".") else f".{e}")
+    return {"theme": theme, "start_dirs": start_dirs, "ext_skipped": ext_skipped}
 
 
 _cfg = _load()
 
-THEME: dict = _cfg["theme"]
-START_DIRS: list[str] = _cfg["start_dirs"]
+THEME: dict       = _cfg["theme"]
+START_DIRS: list  = _cfg["start_dirs"]
+EXT_SKIPPED: set  = _cfg["ext_skipped"]   # lowercase extensions with leading dot
