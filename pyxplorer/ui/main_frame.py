@@ -14,6 +14,7 @@ from ..core.longpath import normalize, to_display
 from ..core.fs import fmt_size
 from ..core import starred as _starred
 from ..settings import THEME as _T, EXT_SKIPPED, SCROLL_SPEED
+from .scroll_utils import make_autohide_pack_setter
 
 _BG       = _T["bg"]
 _TEXT     = _T["text"]
@@ -94,8 +95,8 @@ class MainFrame(ttk.Frame):
 
         # ── Scrollbar ─────────────────────────────────────────────────
         vsb = ttk.Scrollbar(self, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=vsb.set)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        set_vsb = make_autohide_pack_setter(vsb, side=tk.RIGHT, fill=tk.Y)
+        self._tree.configure(yscrollcommand=set_vsb)
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # ── Bindings ──────────────────────────────────────────────────

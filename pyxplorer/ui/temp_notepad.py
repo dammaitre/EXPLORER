@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..settings import THEME as _T
+from .scroll_utils import make_autohide_pack_setter
 
 _BG_DARK = _T["bg_dark"]
 _TEXT = _T["text"]
@@ -66,8 +67,8 @@ class TempNotepad(ttk.Frame):
         self._text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         vsb = ttk.Scrollbar(body, orient="vertical", command=self._text.yview)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self._text.configure(yscrollcommand=vsb.set)
+        set_vsb = make_autohide_pack_setter(vsb, side=tk.RIGHT, fill=tk.Y)
+        self._text.configure(yscrollcommand=set_vsb)
 
         self._text.bind("<KeyRelease>", self._on_change)
         self._text.bind("<Control-c>", self._copy)

@@ -9,6 +9,7 @@ from typing import Callable
 
 from ..core.longpath import normalize, to_display
 from ..settings import THEME as _T, SCROLL_SPEED
+from .scroll_utils import make_autohide_pack_setter
 
 try:
     fitz = importlib.import_module("fitz")
@@ -107,10 +108,10 @@ class PDFViewer(ttk.Frame):
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self._vsb = ttk.Scrollbar(viewport, orient="vertical", command=self._canvas.yview)
-        self._vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self._hsb = ttk.Scrollbar(self, orient="horizontal", command=self._canvas.xview)
-        self._hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        self._canvas.configure(xscrollcommand=self._hsb.set, yscrollcommand=self._vsb.set)
+        set_vsb = make_autohide_pack_setter(self._vsb, side=tk.RIGHT, fill=tk.Y)
+        set_hsb = make_autohide_pack_setter(self._hsb, side=tk.BOTTOM, fill=tk.X)
+        self._canvas.configure(xscrollcommand=set_hsb, yscrollcommand=set_vsb)
 
         self._canvas.bind("<MouseWheel>", self._on_mousewheel)
         self._canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)

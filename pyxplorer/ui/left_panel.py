@@ -18,6 +18,7 @@ from typing import Callable
 from ..core.longpath import normalize, to_display
 from ..core import starred as _starred
 from ..settings import THEME as _T, START_DIRS, SCROLL_SPEED
+from .scroll_utils import make_autohide_pack_setter
 
 _BG_PANEL  = _T["bg_dark"]
 _BG_CURR   = _T["bg_entry"]
@@ -133,8 +134,8 @@ class LeftPanel(ttk.Frame):
         self._tree.tag_configure("drive",   foreground=_TEXT,   font=(_FONT, _SZ, "bold"))
 
         vsb = ttk.Scrollbar(self, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=vsb.set)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        set_vsb = make_autohide_pack_setter(vsb, side=tk.RIGHT, fill=tk.Y)
+        self._tree.configure(yscrollcommand=set_vsb)
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self._tree.bind("<<TreeviewOpen>>",   self._on_expand)

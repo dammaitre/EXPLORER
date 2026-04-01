@@ -8,6 +8,7 @@ from typing import Callable
 
 from ..core.longpath import normalize, to_display
 from ..settings import THEME as _T
+from .scroll_utils import make_autohide_grid_setter
 
 try:
     from winpty import PtyProcess
@@ -83,8 +84,8 @@ class EmbeddedTerminal(ttk.Frame):
         self._text.configure(state="disabled")
 
         vsb = ttk.Scrollbar(body, orient="vertical", command=self._text.yview)
-        vsb.grid(row=0, column=1, sticky="ns")
-        self._text.configure(yscrollcommand=vsb.set)
+        set_vsb = make_autohide_grid_setter(vsb, row=0, column=1, sticky="ns")
+        self._text.configure(yscrollcommand=set_vsb)
 
         ttk.Separator(self, orient="horizontal").grid(row=2, column=0, sticky="ew")
 

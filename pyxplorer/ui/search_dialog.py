@@ -18,6 +18,7 @@ from ..core.longpath import normalize, to_display
 from ..core.scanner import CancelToken
 from ..core.search import search_names
 from ..settings import THEME as _T
+from .scroll_utils import make_autohide_pack_setter
 
 _FONT   = _T["font_family"]
 _SZ     = _T["font_size_base"]
@@ -122,9 +123,9 @@ class SearchDialog:
 
         vsb = ttk.Scrollbar(tree_outer, orient="vertical",
                             command=self._tree.yview)
-        self._tree.configure(yscrollcommand=vsb.set)
+        set_vsb = make_autohide_pack_setter(vsb, side=tk.RIGHT, fill=tk.Y)
+        self._tree.configure(yscrollcommand=set_vsb)
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
         self._tree.bind("<ButtonRelease-1>", self._on_left_click)
         self._tree.bind("<Button-2>",        self._on_middle_click)
