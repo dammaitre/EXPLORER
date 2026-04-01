@@ -4,6 +4,8 @@ All shortcuts fire regardless of which widget has focus, except where
 a text entry is focused (clipboard ops are guarded to avoid conflicts).
 """
 import os
+import sys
+import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -191,6 +193,14 @@ def _rename_selected_dialog(root: tk.Tk, state, refresh_cb, focus_main_cb) -> No
         root.after(0, focus_main_cb)
 
 
+def _open_new_window(path: str) -> None:
+    target = to_display(path)
+    kwargs: dict = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    subprocess.Popen([sys.executable, "-m", "pyxplorer", target], **kwargs)
+
+
 # ── Main entry point ───────────────────────────────────────────────────────────
 
 def bind_keys(
@@ -229,6 +239,9 @@ def bind_keys(
 
     # ── New folder (Ctrl+Shift+N) ──────────────────────────────────────
     root.bind("<Control-N>", _guard(lambda: _new_folder_dialog(root, state, _refresh)))
+
+    # ── New window at current dir (Ctrl+N) ─────────────────────────────
+    root.bind("<Control-n>", _guard(lambda: _open_new_window(state.current_dir)))
 
     # ── Run dialog ─────────────────────────────────────────────────────
     root.bind("<Control-r>", lambda e: top_bar.open_run_dialog())

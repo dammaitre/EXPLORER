@@ -2,7 +2,7 @@
 
 Win11's file explorer copy but damien-friendly
 
-`EXPLORER` is a Windows-focused file explorer prototype built with `tkinter` and `ttk`. It aims to keep the familiar Explorer workflow while stripping the UI down to the essentials: fast navigation, a clean three-pane layout, keyboard-first interaction, and asynchronous folder size scanning.
+`EXPLORER` is a Windows-focused file explorer prototype built with `tkinter` and `ttk`. It keeps familiar Explorer flows while adding keyboard-first navigation, background folder-size scanning, and a VS Code-style lower panel for PDF, terminal, and temp notes workflows.
 
 ## Current state
 
@@ -18,10 +18,17 @@ The app is currently organized as a desktop GUI package with a main application 
 
 - **Top bar navigation:** editable path entry, breadcrumb navigation, and recent path history popup.
 - **Left navigation panel:** lazy-loaded directory tree with current-path highlighting.
-- **Main file view:** directory and file listing with sortable `Name`, `Size`, and `%` columns.
+- **Main file view:** directory and file listing with sortable `Name`, `Size`, and `%` columns, plus dynamic heuristic column support.
 - **Async folder size scanning:** subdirectory sizes are scanned in the background and reflected in the UI when ready.
-- **Status bar feedback:** spinner during scans, item count, total size, and selection size summary.
-- **Keyboard shortcuts:** copy, cut, paste, delete, new folder, run dialog, navigation shortcuts, and terminal launcher.
+- **Status bar feedback:** spinner during scans plus operation messages (scan, paste, heuristics, lower-panel actions).
+- **Lower panel (`P/T/N`):** resizable bottom panel with:
+	- `P`: lightweight PDF viewer (async page load, zoom, text copy)
+	- `T`: embedded PowerShell terminal
+	- `N`: temp UTF-8 notepad backed by `%LOCALAPPDATA%\Pyxplorer\temp.txt`
+- **Shared file clipboard across instances:** `Ctrl+C/X/V` uses `%LOCALAPPDATA%\Pyxplorer\clipboard.json` for cross-window copy/cut/paste.
+- **Async robocopy paste:** copy/move operations are non-blocking and report progress in the status bar.
+- **Heuristics window (`Ctrl+H`):** runs scripts from `%LOCALAPPDATA%\Pyxplorer\scripts` over current directory children and displays results in a dynamic column.
+- **New-window workflows:** middle-click directories in left/main panels to open new windows, plus `Ctrl+N` for opening current directory in another window.
 - **Windows long-path support:** internal path normalization plus an attempt to enable the Windows long-path registry flag.
 - **Theme configuration:** colors, fonts, row heights, and optional start directories are loaded from `pyxplorer/settings.json`.
 
@@ -41,14 +48,21 @@ EXPLORER/
 │   ├── settings.py
 │   ├── state.py
 │   ├── core/
+│   │   ├── heuristics.py
 │   │   ├── fs.py
 │   │   ├── longpath.py
 │   │   ├── scanner.py
-│   │   └── search.py
+│   │   ├── search.py
+│   │   └── shared_clipboard.py
 │   └── ui/
+│       ├── embedded_terminal.py
+│       ├── heuristics_window.py
+│       ├── lower_panel.py
 │       ├── left_panel.py
 │       ├── main_frame.py
+│       ├── pdf_viewer.py
 │       ├── status_bar.py
+│       ├── temp_notepad.py
 │       └── top_bar.py
 └── pyxplorer_agent_plan.md
 ```
@@ -69,7 +83,7 @@ Stores navigation history, current directory, clipboard state, and current selec
 
 ### `pyxplorer/keybindings.py`
 
-Defines app-wide shortcuts and file operations such as copy, cut, paste, delete, new folder creation, path copy, run dialog, and terminal launch.
+Defines app-wide shortcuts and file operations: async paste with status updates, shared clipboard, lower-panel toggles, heuristics window toggle, and navigation/new-window flows.
 
 ### `pyxplorer/settings.py` and `pyxplorer/settings.json`
 
@@ -78,15 +92,22 @@ Load user-adjustable theme and startup directory settings.
 ### `pyxplorer/core/`
 
 - `fs.py`: filesystem operations and display helpers.
+- `heuristics.py`: script discovery and `python script.py PATH` execution helpers.
 - `longpath.py`: Windows long-path normalization and registry toggle helper.
 - `scanner.py`: cancellable background directory-size scanning.
 - `search.py`: regex name search backend stub for future UI integration.
+- `shared_clipboard.py`: cross-instance clipboard persistence in `%LOCALAPPDATA%\Pyxplorer\clipboard.json`.
 
 ### `pyxplorer/ui/`
 
 - `top_bar.py`: path entry, breadcrumbs, history dropdown, and run dialog.
 - `left_panel.py`: lazy-loading tree navigation.
-- `main_frame.py`: main directory listing, sorting, selection tracking, and incremental loading.
+- `main_frame.py`: main directory listing, sorting, selection tracking, incremental loading, and dynamic heuristic column.
+- `lower_panel.py`: bottom panel coordinator (`P/T/N`).
+- `pdf_viewer.py`: async PDF rendering with zoom and text selection/copy.
+- `embedded_terminal.py`: embedded PowerShell terminal view.
+- `temp_notepad.py`: temporary text editor tied to `%LOCALAPPDATA%\Pyxplorer\temp.txt`.
+- `heuristics_window.py`: script selector window for `Ctrl+H` workflow.
 - `status_bar.py`: scan progress and selection summary.
 
 ## Installation
@@ -119,19 +140,24 @@ python -m pyxplorer
 
 - `Ctrl+C`: copy selected items into the app clipboard.
 - `Ctrl+X`: cut selected items into the app clipboard.
-- `Ctrl+V`: paste into the current directory.
+- `Ctrl+V`: async paste into current directory (cross-instance shared clipboard).
 - `Ctrl+Shift+C`: copy current path or selected paths to the system clipboard.
+- `Ctrl+N`: open current directory in a new window.
 - `Ctrl+Shift+N`: create a new folder.
 - `Delete`: permanently delete the selected items.
 - `Ctrl+R`: open the run dialog.
-- `Ctrl+F`: open the current search placeholder dialog.
-- `Ctrl+Alt+T`: open a terminal in the current directory.
+- `Ctrl+F`: open regex search dialog.
+- `Ctrl+Alt+P`: show PDF panel and load selected PDF.
+- `Ctrl+Alt+T`: show terminal panel and restart terminal in current directory.
+- `Ctrl+Alt+N`: show temp notes panel and reset temp file.
+- `Ctrl+H`: toggle heuristics window.
+- `Escape`: hide lower panel.
 - `Left` or `Backspace`: navigate up.
 - `Right` or `Enter`: open the selected directory.
+- `Middle click` on directory (left/main panel): open it in a new window.
 
 ## Notes and limitations
 
-- The search backend exists in `pyxplorer/core/search.py`, but the UI is still a placeholder dialog.
 - The directory scanner computes folder sizes asynchronously, so directory sizes briefly show `—` until scan results arrive.
 - File deletion is permanent; there is currently no recycle-bin integration.
 - The project is Windows-oriented, though parts of the code include basic cross-platform fallbacks.

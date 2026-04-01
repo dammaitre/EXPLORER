@@ -8,6 +8,7 @@ Phase 4 — Left panel: lazy-loading directory tree.
 """
 import os
 import sys
+import subprocess
 import string
 import tkinter as tk
 from tkinter import ttk
@@ -96,6 +97,7 @@ class LeftPanel(ttk.Frame):
         self._tree.bind("<<TreeviewOpen>>",   self._on_expand)
         self._tree.bind("<Button-1>",        self._on_click)
         self._tree.bind("<Double-Button-1>", self._on_double_click)
+        self._tree.bind("<Button-2>",        self._on_middle_click)
 
     # ------------------------------------------------------------------
     # Root population
@@ -247,6 +249,22 @@ class LeftPanel(ttk.Frame):
         path = self._node_paths.get(item)
         if path:
             self.navigate_cb(path)
+        return "break"
+
+    def _on_middle_click(self, event: tk.Event) -> str:
+        """Middle click: open the clicked directory in a new Pyxplorer window."""
+        item = self._tree.identify_row(event.y)
+        if not item:
+            return "break"
+        path = self._node_paths.get(item)
+        if not path:
+            return "break"
+
+        target = to_display(path)
+        kwargs: dict = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        subprocess.Popen([sys.executable, "-m", "pyxplorer", target], **kwargs)
         return "break"
 
     # ------------------------------------------------------------------
