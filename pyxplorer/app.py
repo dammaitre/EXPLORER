@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .state import AppState
-from .core.longpath import normalize, enable_longpath_registry
+from .core.longpath import normalize, to_display, enable_longpath_registry
 from .core.scanner import SizeScanner, CancelToken
 from .ui import icons as _icons_mod
 from .ui.top_bar import TopBar
@@ -198,6 +198,9 @@ class App:
         self._build_layout()
         bind_keys(self.root, self.state, self.top_bar, self.main_frame)
 
+    def _set_title(self, path: str) -> None:
+        self.root.title(f"Pyxplorer - {to_display(path)}")
+
     # ------------------------------------------------------------------
     # Layout
     # ------------------------------------------------------------------
@@ -258,6 +261,7 @@ class App:
             self._scan_token = None
 
         self.state.navigate_to(norm)
+        self._set_title(norm)
         self.top_bar.update_path(norm)
         self.main_frame.load_dir(norm)
         self.left_panel.load_dir(norm)

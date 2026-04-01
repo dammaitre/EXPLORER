@@ -137,6 +137,29 @@ def make_dir(path: str) -> None:
     os.makedirs(normalize(path), exist_ok=True)
 
 
+def rename_item(src_path: str, new_name: str) -> str:
+    """Rename a file or directory in place. Returns the new absolute path."""
+    cleaned = (new_name or "").strip()
+    if not cleaned:
+        raise ValueError("New name cannot be empty.")
+    if os.sep in cleaned or (os.altsep and os.altsep in cleaned):
+        raise ValueError("New name must not contain path separators.")
+
+    src_display = to_display(src_path)
+    parent_display = str(Path(src_display).parent)
+    dst_display = os.path.join(parent_display, cleaned)
+
+    src = normalize(src_display)
+    dst = normalize(dst_display)
+    if os.path.normcase(src) == os.path.normcase(dst):
+        return dst_display
+    if os.path.exists(dst):
+        raise FileExistsError(f"An item named '{cleaned}' already exists.")
+
+    os.rename(src, dst)
+    return dst_display
+
+
 def move_to(src: str, dst: str) -> None:
     """Drag-and-drop stub — same as cut+paste. Phase 10."""
     shutil.move(normalize(src), normalize(dst))

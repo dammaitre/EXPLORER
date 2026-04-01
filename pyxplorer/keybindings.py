@@ -7,10 +7,10 @@ import os
 import sys
 import subprocess
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 
 from .core.longpath import normalize, to_display
-from .core.fs import copy_items, move_items, make_dir, delete_items
+from .core.fs import copy_items, move_items, make_dir, delete_items, rename_item
 from .ui.search_dialog import SearchDialog
 from .settings import THEME as _T
 
@@ -111,6 +111,42 @@ def _new_folder_dialog(root: tk.Tk, state, refresh_cb) -> None:
     btn_row.pack(anchor="e", padx=14, pady=8)
     ttk.Button(btn_row, text="Create", command=_create,     width=8).pack(side=tk.LEFT, padx=2)
     ttk.Button(btn_row, text="Cancel", command=dlg.destroy, width=8).pack(side=tk.LEFT, padx=2)
+
+
+def _rename_selected_dialog(root: tk.Tk, state, refresh_cb, focus_main_cb) -> None:
+    """F2 — rename the currently selected item when selection is singular."""
+    try:
+        paths = list(state.selection)
+        if len(paths) != 1:
+            return
+
+        src = paths[0]
+        current_name = os.path.basename(to_display(src).rstrip("\\/"))
+        if not current_name:
+            return
+
+        new_name = simpledialog.askstring(
+            "Rename",
+            "New name:",
+            parent=root,
+            initialvalue=current_name,
+        )
+        if new_name is None:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == current_name:
+            return
+
+        try:
+            new_path = rename_item(src, new_name)
+        except Exception as exc:
+            messagebox.showerror("Rename error", str(exc), parent=root)
+            return
+
+        state.selection = [new_path]
+        refresh_cb()
+    finally:
+        root.after(0, focus_main_cb)
 
 
 # ── Terminal opener (Phase 8 spec) ─────────────────────────────────────────────
@@ -217,9 +253,18 @@ def bind_keys(root: tk.Tk, state, top_bar, main_frame) -> None:
 
     root.bind("<Delete>", _guard(lambda: _do_delete()))
 
+    # ── Rename (F2) ────────────────────────────────────────────────────
+    root.bind("<F2>", _guard(lambda: _rename_selected_dialog(
+        root, state, _refresh, main_frame._tree.focus_set
+    )))
+
     # ── Terminal (Ctrl+Alt+T) ──────────────────────────────────────────
     root.bind("<Control-Alt-t>", lambda e: open_terminal(state.current_dir))
     root.bind("<Control-Alt-T>", lambda e: open_terminal(state.current_dir))
+
+    # ── Close window (Ctrl+W) ──────────────────────────────────────────
+    root.bind("<Control-w>", lambda e: root.destroy())
+    root.bind("<Control-W>", lambda e: root.destroy())
 
     # ── Navigation ─────────────────────────────────────────────────────
     def _nav(fn):
