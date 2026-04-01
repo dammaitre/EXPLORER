@@ -15,6 +15,7 @@ from tkinter import ttk
 from pathlib import Path
 
 from ..core.longpath import normalize, to_display
+from ..core import starred as _starred
 from ..settings import THEME as _T, START_DIRS
 
 _BG_PANEL  = _T["bg_dark"]
@@ -75,13 +76,45 @@ class LeftPanel(ttk.Frame):
             relief="flat",
         )
 
-        self._tree = ttk.Treeview(
-            self,
-            style="Nav.Treeview",
-            selectmode="none",
-            show="tree",
-        )
+        # ── Starred section ────────────────────────────────────────────
+        self._starred_frame = tk.Frame(self, bg=_BG_PANEL)
+        self._starred_frame.pack(side=tk.TOP, fill=tk.X)
 
+        self._starred_label = tk.Label(
+            self._starred_frame,
+            text="  ★ Starred",
+            bg=_BG_PANEL,
+            fg=_ACCENT,
+            font=(_FONT, _SZ, "bold"),
+            anchor="w",
+        )
+        self._starred_label.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
+
+        self._starred_list = tk.Listbox(
+            self._starred_frame,
+            bg=_BG_PANEL,
+            fg=_TEXT,
+            selectbackground=_BG_PANEL,
+            selectforeground=_ACCENT,
+            font=(_FONT, _SZ),
+            borderwidth=0,
+            highlightthickness=0,
+            activestyle="none",
+            height=0,   # hidden until there are entries
+        )
+        self._starred_list.pack(side=tk.TOP, fill=tk.X, padx=4)
+        self._starred_list.bind("<Button-1>",        self._on_starred_click)
+        self._starred_list.bind("<Double-Button-1>", self._on_starred_click)
+
+        self._starred_sep = ttk.Separator(self, orient="horizontal")
+        self._starred_sep.pack(side=tk.TOP, fill=tk.X, pady=2)
+
+        # Internal map: listbox index -> full path
+        self._starred_paths: list[str] = []
+
+        self._build_nav_tree()
+
+    def _build_nav_tree(self) -> None:
         # Tags
         self._tree.tag_configure("dir",     foreground=_TEXT)
         self._tree.tag_configure("current", foreground=_ACCENT, background=_BG_CURR)
@@ -266,6 +299,36 @@ class LeftPanel(ttk.Frame):
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         subprocess.Popen([sys.executable, "-m", "pyxplorer", target], **kwargs)
         return "break"
+
+    # ------------------------------------------------------------------
+    # Public API — starred list
+    # ------------------------------------------------------------------
+
+    def refresh_starred(self) -> None:
+        """Rebuild the starred listbox from the persisted store."""
+        self._starred_list.delete(0, tk.END)
+        self._starred_paths = []
+        for path in _starred.all_starred():
+            name = Path(to_display(path)).name or path
+            self._starred_list.insert(tk.END, f"  \u2605  {name}")
+            self._starred_paths.append(path)
+        # Show/hide the listbox and separator dynamically
+        if self._starred_paths:
+            self._starred_list.configure(height=min(len(self._starred_paths), 8))
+            self._starred_list.pack(side=tk.TOP, fill=tk.X, padx=4)
+            self._starred_sep.pack(side=tk.TOP, fill=tk.X, pady=2)
+        else:
+            self._starred_list.pack_forget()
+            self._starred_sep.pack_forget()
+
+    def _on_starred_click(self, event: tk.Event) -> None:
+        idx = self._starred_list.nearest(event.y)
+        if 0 <= idx < len(self._starred_paths):
+            path = self._starred_paths[idx]
+            if os.path.isdir(normalize(path)):
+                self.navigate_cb(path)
+            if self.focus_back_cb:
+                self.focus_back_cb()
 
     # ------------------------------------------------------------------
     # Public API — called by App._navigate on every navigation

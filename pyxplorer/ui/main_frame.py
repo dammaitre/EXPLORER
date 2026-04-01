@@ -12,6 +12,7 @@ from typing import Callable
 
 from ..core.longpath import normalize, to_display
 from ..core.fs import fmt_size
+from ..core import starred as _starred
 from ..settings import THEME as _T, EXT_SKIPPED
 
 _BG       = _T["bg"]
@@ -54,13 +55,14 @@ class MainFrame(ttk.Frame):
     def _build(self) -> None:
         self._tree = ttk.Treeview(
             self,
-            columns=("heur", "size", "pct"),
+            columns=("star", "heur", "size", "pct"),
             selectmode="extended",
         )
 
         # ── Headings ──────────────────────────────────────────────────
         self._tree.heading("#0",    text="Name",  anchor="w",
                            command=lambda: self._sort_by("name"))
+        self._tree.heading("star",  text="",      anchor="center")
         self._tree.heading("size",  text="Size",  anchor="e",
                            command=lambda: self._sort_by("size"))
         self._tree.heading("pct",   text="%",     anchor="e",
@@ -69,7 +71,8 @@ class MainFrame(ttk.Frame):
 
         # ── Columns ───────────────────────────────────────────────────
         self._tree.column("#0",   stretch=True,  minwidth=180, width=420, anchor="w")
-        self._tree.column("heur", stretch=False, minwidth=0, width=0, anchor="w")
+        self._tree.column("star", stretch=False, minwidth=28,  width=28,  anchor="center")
+        self._tree.column("heur", stretch=False, minwidth=0,   width=0,   anchor="w")
         self._tree.column("size", stretch=False, minwidth=80,  width=110, anchor="e")
         self._tree.column("pct",  stretch=False, minwidth=50,  width=70,  anchor="e")
 
@@ -86,6 +89,7 @@ class MainFrame(ttk.Frame):
         self._tree.tag_configure("denied",  foreground=_DENIED)
         self._tree.tag_configure("more",    foreground=_ACCENT)
         self._tree.tag_configure("symlink", foreground="#A0C4E8")
+        self._tree.tag_configure("starred",  foreground=_ACCENT)
 
         # ── Scrollbar ─────────────────────────────────────────────────
         vsb = ttk.Scrollbar(self, orient="vertical", command=self._tree.yview)
@@ -246,6 +250,36 @@ class MainFrame(ttk.Frame):
     def get_current_rows(self) -> list[dict]:
         return [dict(r) for r in self._all_rows]
 
+    def refresh_stars(self) -> None:
+        """Refresh the ★ column for all visible rows without reloading the directory."""
+        for iid, row in self._item_data.items():
+            is_star = _starred.is_starred(row["path"])
+            star_val = "★" if is_star else ""
+            self._tree.set(iid, "star", star_val)
+            current_tags = list(self._tree.item(iid, "tags"))
+            base_tags = [t for t in current_tags if t != "starred"]
+            new_tags = base_tags + (["starred"] if is_star else [])
+            self._tree.item(iid, tags=new_tags)
+
+    def toggle_star_selected(self) -> str | None:
+        """Toggle star on the currently focused/selected item. Returns the path."""
+        sel = self._tree.selection()
+        if not sel:
+            return None
+        row = self._item_data.get(sel[0])
+        if not row:
+            return None
+        _starred.toggle(row["path"])
+        self.refresh_stars()
+        return row["path"]
+
+    def get_starred_iids_in_order(self) -> list[str]:
+        """Return tree iids of starred rows in their display order."""
+        return [
+            iid for iid in self._item_data
+            if _starred.is_starred(self._item_data[iid]["path"])
+        ]
+
     def apply_heuristic_results(self, title: str, by_path: dict[str, str]) -> None:
         self._tree.heading("heur", text=title or "Heuristic", anchor="w")
         self._tree.column("heur", stretch=True, minwidth=120, width=180, anchor="w")
@@ -254,8 +288,7 @@ class MainFrame(ttk.Frame):
             row["heur_str"] = by_path.get(row["path"], "")
 
         for iid, row in self._item_data.items():
-            value = row.get("heur_str", "")
-            self._tree.set(iid, "heur", value)
+            self._tree.set(iid, "heur", row.get("heur_str", ""))
 
     def clear_heuristic_column(self) -> None:
         self._tree.heading("heur", text="", anchor="w")
@@ -282,12 +315,15 @@ class MainFrame(ttk.Frame):
 
         for row in visible:
             img = self._icons.get("folder" if row["is_dir"] else "file")
+            is_star = _starred.is_starred(row["path"])
+            star_val = "★" if is_star else ""
+            tags = (row["tag"], "starred") if is_star else (row["tag"],)
             iid = self._tree.insert(
                 "", "end",
                 text=f"  {row['name']}",
                 image=img or "",
-                values=(row.get("heur_str", ""), row["size_str"], row["pct_str"]),
-                tags=(row["tag"],),
+                values=(star_val, row.get("heur_str", ""), row["size_str"], row["pct_str"]),
+                tags=tags,
             )
             self._item_data[iid] = row
             self._path_iids[os.path.normcase(row["path"])] = iid
@@ -321,12 +357,15 @@ class MainFrame(ttk.Frame):
             self._more_iid = None
         for row in self._hidden_rows:
             img = self._icons.get("folder" if row["is_dir"] else "file")
+            is_star = _starred.is_starred(row["path"])
+            star_val = "★" if is_star else ""
+            tags = (row["tag"], "starred") if is_star else (row["tag"],)
             iid = self._tree.insert(
                 "", "end",
                 text=f"  {row['name']}",
                 image=img or "",
-                values=(row.get("heur_str", ""), row["size_str"], row["pct_str"]),
-                tags=(row["tag"],),
+                values=(star_val, row.get("heur_str", ""), row["size_str"], row["pct_str"]),
+                tags=tags,
             )
             self._item_data[iid] = row
             self._path_iids[os.path.normcase(row["path"])] = iid

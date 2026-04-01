@@ -17,6 +17,7 @@ from .core.shared_clipboard import (
     save_shared_clipboard,
     clear_shared_clipboard,
 )
+from .core import starred as _starred
 from .ui.search_dialog import SearchDialog
 from .settings import THEME as _T
 
@@ -215,6 +216,7 @@ def bind_keys(
     hide_lower_cb=None,
     close_cb=None,
     status_cb=None,
+    refresh_starred_cb=None,
 ) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
@@ -315,13 +317,51 @@ def bind_keys(
     if hide_lower_cb is not None:
         root.bind("<Escape>", lambda e: hide_lower_cb())
 
-    # ── Close window (Ctrl+W) ──────────────────────────────────────────
+    # ── Close window (Ctrl+W) ───────────────────────────────────────────────
     if close_cb is None:
         close_cb = root.destroy
     root.bind("<Control-w>", lambda e: close_cb())
     root.bind("<Control-W>", lambda e: close_cb())
 
-    # ── Navigation ─────────────────────────────────────────────────────
+    # ── Star toggle (Ctrl+S) ─────────────────────────────────────────────
+    def _do_toggle_star():
+        path = main_frame.toggle_star_selected()
+        if path is None:
+            return
+        verb = "★ Starred" if _starred.is_starred(path) else "☆ Unstarred"
+        name = os.path.basename(to_display(path).rstrip("\\/")) or path
+        status_cb(f"{verb}: {name}")
+        if refresh_starred_cb is not None:
+            refresh_starred_cb()
+
+    root.bind("<Control-s>", _guard(lambda: _do_toggle_star()))
+    root.bind("<Control-S>", _guard(lambda: _do_toggle_star()))
+
+    # ── Jump to starred (Alt+Up / Alt+Down) ──────────────────────────────
+    def _jump_starred(direction: int, event=None) -> str:
+        """Move selection to previous (-1) or next (+1) starred item in list order."""
+        if _in_entry(root):
+            return "break"
+        starred_iids = main_frame.get_starred_iids_in_order()
+        if not starred_iids:
+            status_cb("No starred items in this directory")
+            return "break"
+        sel = main_frame._tree.selection()
+        current = sel[0] if sel else None
+        if current in starred_iids:
+            idx = starred_iids.index(current)
+            target = starred_iids[(idx + direction) % len(starred_iids)]
+        else:
+            # jump to first (down) or last (up) starred item
+            target = starred_iids[0] if direction > 0 else starred_iids[-1]
+        main_frame._select_item(target)
+        main_frame._tree.focus_set()
+        return "break"
+
+    root.bind("<Alt-Up>",   lambda e: _jump_starred(-1))
+    root.bind("<Alt-Down>", lambda e: _jump_starred(+1))
+
+    # ── Navigation ─────────────────────────────────────────────────────────
     def _focus_main_and_run(fn):
         def _wrapped(e=None):
             if _in_entry(root):

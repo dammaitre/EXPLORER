@@ -39,6 +39,8 @@ _FONT  = _T["font_family"]
 _SZ    = _T["font_size_base"]    # default: 13
 _SZ_S  = _T["font_size_small"]   # default: 12
 _RH    = _T["row_height"]        # default: 36
+_LOWER_MIN_H = 150
+_LOWER_DEFAULT_H = 260
 
 
 def _apply_win11_style(root: tk.Tk) -> None:
@@ -221,6 +223,7 @@ class App:
         self._scanner:    SizeScanner = SizeScanner(self._scan_queue)
         self._scan_token: CancelToken | None = None
         self._lower_visible: bool = False
+        self._lower_height: int = _LOWER_DEFAULT_H
         self._heuristics_win: HeuristicsWindow | None = None
 
         self._build_layout()
@@ -236,6 +239,7 @@ class App:
             hide_lower_cb=self.hide_lower_panel,
             close_cb=self.close,
             status_cb=self.status_bar.set_status,
+            refresh_starred_cb=self.left_panel.refresh_starred,
         )
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -301,6 +305,9 @@ class App:
         # Single-click on left panel returns keyboard focus to main frame
         self.left_panel.focus_back_cb = self.main_frame._tree.focus_set
 
+        # Initialise starred list from persisted store
+        self.left_panel.refresh_starred()
+
         self.lower_panel = LowerPanel(
             self.body_paned,
             self.root,
@@ -313,7 +320,11 @@ class App:
         if self._lower_visible:
             self.lower_panel.focus_active_tab()
             return
-        self.body_paned.add(self.lower_panel, minsize=150, height=260)
+        self.body_paned.add(
+            self.lower_panel,
+            minsize=_LOWER_MIN_H,
+            height=max(_LOWER_MIN_H, self._lower_height),
+        )
         self._lower_visible = True
         self.root.after_idle(self._set_lower_sash)
         self.root.after_idle(self.lower_panel.focus_active_tab)
@@ -323,13 +334,27 @@ class App:
             return
         try:
             total = max(self.body_paned.winfo_height(), 520)
-            self.body_paned.sash_place(0, 1, total - 260)
+            lower_h = max(_LOWER_MIN_H, min(self._lower_height, total - 100))
+            self.body_paned.sash_place(0, 1, total - lower_h)
+        except Exception:
+            pass
+
+    def _remember_lower_height(self) -> None:
+        if not self._lower_visible:
+            return
+        try:
+            total = self.body_paned.winfo_height()
+            _, sash_y = self.body_paned.sash_coord(0)
+            remembered = total - sash_y
+            if remembered >= _LOWER_MIN_H:
+                self._lower_height = remembered
         except Exception:
             pass
 
     def hide_lower_panel(self) -> None:
         if not self._lower_visible:
             return
+        self._remember_lower_height()
         try:
             self.body_paned.forget(self.lower_panel)
         except Exception:
