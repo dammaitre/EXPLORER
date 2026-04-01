@@ -115,6 +115,13 @@ class LeftPanel(ttk.Frame):
         self._build_nav_tree()
 
     def _build_nav_tree(self) -> None:
+        self._tree = ttk.Treeview(
+            self,
+            style="Nav.Treeview",
+            selectmode="none",
+            show="tree",
+        )
+
         # Tags
         self._tree.tag_configure("dir",     foreground=_TEXT)
         self._tree.tag_configure("current", foreground=_ACCENT, background=_BG_CURR)
