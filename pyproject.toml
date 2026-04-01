@@ -6,6 +6,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pyxplorer"
 version = "0.1.0"
+dependencies = [
+	"Pillow",
+	"PyMuPDF",
+	"pywinpty",
+]
 
 [project.scripts]
 pyxplorer = "pyxplorer.main:main"

@@ -1,0 +1,142 @@
+import os
+import tkinter as tk
+from tkinter import ttk
+from typing import Any
+
+from ..core.longpath import normalize, to_display
+from ..settings import THEME as _T
+from .embedded_terminal import EmbeddedTerminal
+from .pdf_viewer import PDFViewer
+from .temp_notepad import TempNotepad
+
+_FONT = _T["font_family"]
+_SZ_S = _T["font_size_small"]
+_TEXT_MUTE = _T["text_mute"]
+
+
+class LowerPanel(ttk.Frame):
+    def __init__(self, parent, root: tk.Tk, state, hide_cb, status_cb=None):
+        super().__init__(parent, style="LowerPanel.TFrame")
+        self.root = root
+        self.state: Any = state
+        self._hide_cb = hide_cb
+        self._status_cb = status_cb or (lambda message: None)
+        self.active_tab: str | None = None
+        self._tab_buttons: dict[str, ttk.Button] = {}
+        self._tab_frames: dict[str, ttk.Frame] = {}
+        self._tab_titles = {
+            "pdf": "PDF viewer",
+            "terminal": "Terminal",
+            "notes": "Temp notes",
+        }
+
+        self._build()
+
+    def _build(self) -> None:
+        tabs = ttk.Frame(self, style="LowerTabs.TFrame")
+        tabs.pack(side=tk.TOP, fill=tk.X)
+
+        for key, label in (("pdf", "P"), ("terminal", "T"), ("notes", "N")):
+            button = ttk.Button(
+                tabs,
+                text=label,
+                style="LowerTab.TButton",
+                command=lambda name=key: self.show_tab(name),
+                width=4,
+            )
+            button.pack(side=tk.LEFT, padx=(8 if key == "pdf" else 0, 6), pady=8)
+            self._tab_buttons[key] = button
+
+        ttk.Button(
+            tabs,
+            text="✕",
+            style="Flat.TButton",
+            command=self._hide_cb,
+            width=3,
+        ).pack(side=tk.RIGHT, padx=8, pady=8)
+
+        self._title_var = tk.StringVar(value="Lower panel")
+        ttk.Label(
+            tabs,
+            textvariable=self._title_var,
+            anchor="w",
+            font=(_FONT, _SZ_S),
+            foreground=_TEXT_MUTE,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        content = ttk.Frame(self, style="LowerContent.TFrame")
+        content.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self._pdf_viewer = PDFViewer(content, self.root, status_cb=self._status_cb)
+        self._terminal = EmbeddedTerminal(content, self.root, status_cb=self._status_cb)
+        self._notes = TempNotepad(content, self.root, status_cb=self._status_cb)
+
+        self._tab_frames = {
+            "pdf": self._pdf_viewer,
+            "terminal": self._terminal,
+            "notes": self._notes,
+        }
+
+        self.show_tab("pdf")
+        self._pdf_viewer.show_message("Select a single PDF file and press Ctrl+Alt+P.")
+        self._status_cb("PDF viewer ready")
+
+    def show_tab(self, name: str) -> None:
+        frame = self._tab_frames.get(name)
+        if frame is None:
+            return
+
+        for child in self._tab_frames.values():
+            child.pack_forget()
+
+        frame.pack(fill=tk.BOTH, expand=True)
+        self.active_tab = name
+
+        for key, button in self._tab_buttons.items():
+            button.configure(style="LowerTabActive.TButton" if key == name else "LowerTab.TButton")
+
+        self._title_var.set(self._tab_titles.get(name, "Lower panel"))
+        self._status_cb(f"{self._title_var.get()} active")
+
+        self.focus_active_tab()
+
+    def focus_active_tab(self) -> None:
+        if self.active_tab == "pdf":
+            self._pdf_viewer.focus_viewer()
+        elif self.active_tab == "terminal":
+            self._terminal.focus_terminal()
+        elif self.active_tab == "notes":
+            self._notes.focus_editor()
+
+    def request_pdf(self) -> None:
+        self.show_tab("pdf")
+        paths = list(self.state.selection)
+        if len(paths) != 1:
+            self._pdf_viewer.show_message("Select a single PDF file and press Ctrl+Alt+P.")
+            self._status_cb("PDF load skipped: select a single PDF file")
+            return
+
+        path = normalize(paths[0])
+        if os.path.isdir(path) or not path.lower().endswith(".pdf"):
+            self._pdf_viewer.show_message("The selected item is not a PDF file.")
+            self._status_cb("PDF load skipped: selected item is not a PDF")
+            return
+
+        self._title_var.set(f"PDF viewer — {os.path.basename(to_display(path))}")
+        self._pdf_viewer.load_pdf(path)
+
+    def request_terminal(self) -> None:
+        self.show_tab("terminal")
+        target = normalize(self.state.current_dir)
+        self._title_var.set(f"Terminal — {to_display(target)}")
+        self._terminal.load(target)
+
+    def request_notes(self) -> None:
+        self.show_tab("notes")
+        self._title_var.set(f"Temp notes — {self._notes.temp_path_display}")
+        self._notes.load()
+
+    def shutdown(self) -> None:
+        self._pdf_viewer.unload()
+        self._terminal.shutdown()
+        self._notes.shutdown()

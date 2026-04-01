@@ -5,6 +5,7 @@
     "bg_entry":        "#2D2D2D",
     "accent":          "#60CDFF",
     "text":            "#F3F3F3",
+    "terminal_text":   "#00FF41",
     "text_mute":       "#9D9D9D",
     "border":          "#3A3A3A",
     "row_hover":       "#2A2A2A",

@@ -14,6 +14,7 @@ from .ui import icons as _icons_mod
 from .ui.top_bar import TopBar
 from .ui.left_panel import LeftPanel
 from .ui.main_frame import MainFrame
+from .ui.lower_panel import LowerPanel
 from .ui.status_bar import StatusBar
 from .keybindings import bind_keys
 from .settings import THEME as _T
@@ -55,6 +56,9 @@ def _apply_win11_style(root: tk.Tk) -> None:
     style.configure("LeftPanel.TFrame", background=BG_DARK)
     style.configure("TFrame", background=BG)
     style.configure("StatusBar.TFrame", background=STATUS_BG, relief="flat")
+    style.configure("LowerPanel.TFrame", background=BG_DARK)
+    style.configure("LowerTabs.TFrame", background=BG_DARK)
+    style.configure("LowerContent.TFrame", background=BG)
 
     # ── Labels ────────────────────────────────────────────────────────
     style.configure("TLabel", background=BG, foreground=TEXT)
@@ -109,6 +113,24 @@ def _apply_win11_style(root: tk.Tk) -> None:
     )
     style.map("Flat.TButton",
         background=[("active", ROW_H)],
+    )
+    style.configure("LowerTab.TButton",
+        background=BG_DARK, foreground=TEXT_MUTE,
+        bordercolor=BG_DARK, focuscolor=BG_DARK,
+        padding=(10, 6),
+        relief="flat",
+        font=(_FONT, _SZ_S),
+    )
+    style.map("LowerTab.TButton",
+        background=[("active", ROW_H), ("pressed", ROW_SEL)],
+        foreground=[("active", TEXT)],
+    )
+    style.configure("LowerTabActive.TButton",
+        background=ROW_SEL, foreground=TEXT,
+        bordercolor=ROW_SEL, focuscolor=ROW_SEL,
+        padding=(10, 6),
+        relief="flat",
+        font=(_FONT, _SZ_S),
     )
     style.configure("Breadcrumb.TButton",
         background=BG, foreground=TEXT,
@@ -194,9 +216,21 @@ class App:
         self._scan_queue: queue.Queue = queue.Queue()
         self._scanner:    SizeScanner = SizeScanner(self._scan_queue)
         self._scan_token: CancelToken | None = None
+        self._lower_visible: bool = False
 
         self._build_layout()
-        bind_keys(self.root, self.state, self.top_bar, self.main_frame)
+        bind_keys(
+            self.root,
+            self.state,
+            self.top_bar,
+            self.main_frame,
+            open_pdf_cb=self.open_pdf_panel,
+            open_terminal_cb=self.open_terminal_panel,
+            open_notes_cb=self.open_notes_panel,
+            hide_lower_cb=self.hide_lower_panel,
+            close_cb=self.close,
+        )
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     def _set_title(self, path: str) -> None:
         self.root.title(f"Pyxplorer - {to_display(path)}")
@@ -217,9 +251,23 @@ class App:
         self.status_bar = StatusBar(self.root, self.state)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        # Middle area: PanedWindow → left panel + main frame
-        self.paned = tk.PanedWindow(
+        # Middle area: vertical shell → top work area + lower panel
+        self.body_paned = tk.PanedWindow(
             self.root,
+            orient=tk.VERTICAL,
+            sashwidth=4,
+            sashrelief="flat",
+            background=ROW_H,
+            bd=0,
+        )
+        self.body_paned.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.workspace = ttk.Frame(self.body_paned, style="TFrame")
+        self.body_paned.add(self.workspace, minsize=320)
+
+        # Main work area: left panel + main frame
+        self.paned = tk.PanedWindow(
+            self.workspace,
             orient=tk.HORIZONTAL,
             sashwidth=4,
             sashrelief="flat",
@@ -245,6 +293,62 @@ class App:
 
         # Single-click on left panel returns keyboard focus to main frame
         self.left_panel.focus_back_cb = self.main_frame._tree.focus_set
+
+        self.lower_panel = LowerPanel(
+            self.body_paned,
+            self.root,
+            self.state,
+            hide_cb=self.hide_lower_panel,
+            status_cb=self.status_bar.set_status,
+        )
+
+    def _ensure_lower_panel_visible(self) -> None:
+        if self._lower_visible:
+            self.lower_panel.focus_active_tab()
+            return
+        self.body_paned.add(self.lower_panel, minsize=150, height=260)
+        self._lower_visible = True
+        self.root.after_idle(self._set_lower_sash)
+        self.root.after_idle(self.lower_panel.focus_active_tab)
+
+    def _set_lower_sash(self) -> None:
+        if not self._lower_visible:
+            return
+        try:
+            total = max(self.body_paned.winfo_height(), 520)
+            self.body_paned.sash_place(0, 1, total - 260)
+        except Exception:
+            pass
+
+    def hide_lower_panel(self) -> None:
+        if not self._lower_visible:
+            return
+        try:
+            self.body_paned.forget(self.lower_panel)
+        except Exception:
+            return
+        self._lower_visible = False
+        self.status_bar.set_status("Lower panel hidden")
+        self.main_frame._tree.focus_set()
+
+    def open_pdf_panel(self) -> None:
+        self._ensure_lower_panel_visible()
+        self.lower_panel.request_pdf()
+
+    def open_terminal_panel(self) -> None:
+        self._ensure_lower_panel_visible()
+        self.lower_panel.request_terminal()
+
+    def open_notes_panel(self) -> None:
+        self._ensure_lower_panel_visible()
+        self.lower_panel.request_notes()
+
+    def close(self) -> None:
+        if self._scan_token:
+            self._scan_token.cancel()
+            self._scan_token = None
+        self.lower_panel.shutdown()
+        self.root.destroy()
 
     # ------------------------------------------------------------------
     # Navigation controller (single point of truth)

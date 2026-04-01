@@ -4,8 +4,6 @@ All shortcuts fire regardless of which widget has focus, except where
 a text entry is focused (clipboard ops are guarded to avoid conflicts).
 """
 import os
-import sys
-import subprocess
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
@@ -21,9 +19,9 @@ _SZ   = _T["font_size_base"]
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _in_entry(root: tk.Tk) -> bool:
-    """True when a text entry currently holds keyboard focus."""
+    """True when a text-input widget currently holds keyboard focus."""
     try:
-        return isinstance(root.focus_get(), (tk.Entry, ttk.Entry))
+        return isinstance(root.focus_get(), (tk.Entry, ttk.Entry, tk.Text))
     except Exception:
         return False
 
@@ -149,46 +147,19 @@ def _rename_selected_dialog(root: tk.Tk, state, refresh_cb, focus_main_cb) -> No
         root.after(0, focus_main_cb)
 
 
-# ── Terminal opener (Phase 8 spec) ─────────────────────────────────────────────
-
-def open_terminal(current_dir: str) -> None:
-    """
-    Open a terminal at current_dir.
-    Priority on Windows: Windows Terminal → PowerShell 7 → PowerShell 5 → cmd.exe
-    Never passes \\?\\ prefixed paths to the shell.
-    """
-    display_dir = to_display(current_dir)
-
-    if sys.platform == "win32":
-        for args in [
-            ["wt.exe",          "-d",        display_dir],
-            ["pwsh.exe",        "-NoExit", "-Command", f"Set-Location '{display_dir}'"],
-            ["powershell.exe",  "-NoExit", "-Command", f"Set-Location '{display_dir}'"],
-        ]:
-            try:
-                subprocess.Popen(args, creationflags=subprocess.CREATE_NEW_CONSOLE)
-                return
-            except FileNotFoundError:
-                continue
-        # Last resort: cmd.exe
-        subprocess.Popen(
-            ["cmd.exe", "/K", f"cd /d \"{display_dir}\""],
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-        )
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", "-a", "Terminal", display_dir])
-    else:
-        for term in ["gnome-terminal", "konsole", "xterm"]:
-            try:
-                subprocess.Popen([term, "--working-directory", display_dir])
-                return
-            except FileNotFoundError:
-                continue
-
-
 # ── Main entry point ───────────────────────────────────────────────────────────
 
-def bind_keys(root: tk.Tk, state, top_bar, main_frame) -> None:
+def bind_keys(
+    root: tk.Tk,
+    state,
+    top_bar,
+    main_frame,
+    open_pdf_cb=None,
+    open_terminal_cb=None,
+    open_notes_cb=None,
+    hide_lower_cb=None,
+    close_cb=None,
+) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
     def _refresh():
@@ -258,18 +229,42 @@ def bind_keys(root: tk.Tk, state, top_bar, main_frame) -> None:
         root, state, _refresh, main_frame._tree.focus_set
     )))
 
-    # ── Terminal (Ctrl+Alt+T) ──────────────────────────────────────────
-    root.bind("<Control-Alt-t>", lambda e: open_terminal(state.current_dir))
-    root.bind("<Control-Alt-T>", lambda e: open_terminal(state.current_dir))
+    # ── Lower PDF viewer (Ctrl+Alt+P) ─────────────────────────────────
+    if open_pdf_cb is not None:
+        root.bind("<Control-Alt-p>", lambda e: open_pdf_cb())
+        root.bind("<Control-Alt-P>", lambda e: open_pdf_cb())
+
+    # ── Lower terminal (Ctrl+Alt+T) ──────────────────────────────────
+    if open_terminal_cb is not None:
+        root.bind("<Control-Alt-t>", lambda e: open_terminal_cb())
+        root.bind("<Control-Alt-T>", lambda e: open_terminal_cb())
+
+    # ── Lower temp notes (Ctrl+Alt+N) ────────────────────────────────
+    if open_notes_cb is not None:
+        root.bind("<Control-Alt-n>", lambda e: open_notes_cb())
+        root.bind("<Control-Alt-N>", lambda e: open_notes_cb())
+
+    # ── Hide lower pane (Escape) ───────────────────────────────────────
+    if hide_lower_cb is not None:
+        root.bind("<Escape>", lambda e: hide_lower_cb())
 
     # ── Close window (Ctrl+W) ──────────────────────────────────────────
-    root.bind("<Control-w>", lambda e: root.destroy())
-    root.bind("<Control-W>", lambda e: root.destroy())
+    if close_cb is None:
+        close_cb = root.destroy
+    root.bind("<Control-w>", lambda e: close_cb())
+    root.bind("<Control-W>", lambda e: close_cb())
 
     # ── Navigation ─────────────────────────────────────────────────────
-    def _nav(fn):
-        return lambda e: None if _in_entry(root) else fn()
+    def _focus_main_and_run(fn):
+        def _wrapped(e=None):
+            if _in_entry(root):
+                return None
+            main_frame._tree.focus_set()
+            return fn()
+        return _wrapped
 
-    root.bind("<Left>",      _nav(main_frame._go_up))
-    root.bind("<BackSpace>", _nav(main_frame._go_up))
-    root.bind("<Right>",     _nav(main_frame._open_selected))
+    root.bind("<Left>",      _focus_main_and_run(main_frame._go_up))
+    root.bind("<Right>",     _focus_main_and_run(main_frame._open_selected))
+    root.bind("<Up>",        _focus_main_and_run(main_frame._on_up))
+    root.bind("<Down>",      _focus_main_and_run(main_frame._on_down))
+    root.bind("<BackSpace>", _focus_main_and_run(main_frame._go_up))

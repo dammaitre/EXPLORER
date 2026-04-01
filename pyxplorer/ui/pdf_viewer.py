@@ -1,0 +1,519 @@
+import io
+import importlib
+import os
+import queue
+import threading
+import tkinter as tk
+from tkinter import ttk
+from typing import Callable
+
+from ..core.longpath import normalize, to_display
+from ..settings import THEME as _T
+
+try:
+    fitz = importlib.import_module("fitz")
+except ImportError:
+    fitz = None
+
+if fitz is not None:
+    try:
+        fitz.TOOLS.mupdf_display_errors(False)
+    except Exception:
+        pass
+    try:
+        fitz.TOOLS.mupdf_display_warnings(False)
+    except Exception:
+        pass
+
+try:
+    from PIL import Image, ImageTk
+except ImportError:
+    Image = None
+    ImageTk = None
+
+_BG = _T["bg"]
+_BG_DARK = _T["bg_dark"]
+_TEXT = _T["text"]
+_TEXT_MUTE = _T["text_mute"]
+_ACCENT = _T["accent"]
+_BORDER = _T["border"]
+_FONT = _T["font_family"]
+_SZ_S = _T["font_size_small"]
+
+_MARGIN_X = 18
+_MARGIN_Y = 16
+_PAGE_GAP = 18
+_QUEUE_TICK_MS = 35
+_ZOOM_MIN = 0.5
+_ZOOM_MAX = 3.0
+_ZOOM_STEP = 1.1
+_DEFAULT_ZOOM = 1.25
+
+
+class PDFViewer(ttk.Frame):
+    def __init__(
+        self,
+        parent,
+        root: tk.Tk,
+        status_cb: Callable[[str], None] | None = None,
+    ):
+        super().__init__(parent, style="LowerContent.TFrame")
+        self.root = root
+        self._status_cb = status_cb or (lambda message: None)
+        self._doc = None
+        self._doc_path: str | None = None
+        self._page_count = 0
+        self._loaded_count = 0
+        self._failed_count = 0
+        self._load_token = 0
+        self._render_queue: queue.Queue = queue.Queue()
+        self._pump_after: str | None = None
+        self._worker: threading.Thread | None = None
+        self._page_views: list[dict] = []
+        self._photos: list = []
+        self._page_payloads: dict[int, dict] = {}
+        self._selection_items: list[int] = []
+        self._selection_text = ""
+        self._drag_anchor: tuple[float, float] | None = None
+        self._drag_current: tuple[float, float] | None = None
+        self._zoom = _DEFAULT_ZOOM
+
+        self._build()
+        self.show_message("Select a single PDF file and press Ctrl+Alt+P.")
+
+    def _build(self) -> None:
+        self._message_var = tk.StringVar(value="")
+        ttk.Label(
+            self,
+            textvariable=self._message_var,
+            anchor="w",
+            font=(_FONT, _SZ_S),
+            foreground=_TEXT_MUTE,
+            padding=(12, 8),
+        ).pack(side=tk.TOP, fill=tk.X)
+
+        viewport = ttk.Frame(self, style="LowerContent.TFrame")
+        viewport.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self._canvas = tk.Canvas(
+            viewport,
+            background=_BG_DARK,
+            highlightthickness=0,
+            borderwidth=0,
+            xscrollincrement=24,
+            yscrollincrement=24,
+        )
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self._vsb = ttk.Scrollbar(viewport, orient="vertical", command=self._canvas.yview)
+        self._vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._hsb = ttk.Scrollbar(self, orient="horizontal", command=self._canvas.xview)
+        self._hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        self._canvas.configure(xscrollcommand=self._hsb.set, yscrollcommand=self._vsb.set)
+
+        self._canvas.bind("<MouseWheel>", self._on_mousewheel)
+        self._canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
+        self._canvas.bind("<Control-MouseWheel>", self._on_ctrl_mousewheel)
+        self._canvas.bind("<ButtonPress-1>", self._on_press)
+        self._canvas.bind("<B1-Motion>", self._on_drag)
+        self._canvas.bind("<ButtonRelease-1>", self._on_release)
+        self._canvas.bind("<Button-1>", lambda e: self._canvas.focus_set(), add=True)
+        self._canvas.bind("<Control-c>", lambda e: self.copy_selection() or "break")
+        self._canvas.bind("<Control-C>", lambda e: self.copy_selection() or "break")
+        self._canvas.bind("<Configure>", self._on_canvas_configure)
+
+    def focus_viewer(self) -> None:
+        self._canvas.focus_set()
+
+    def show_message(self, message: str) -> None:
+        self._message_var.set(message)
+
+    def unload(self) -> None:
+        self._load_token += 1
+        if self._pump_after is not None:
+            try:
+                self.after_cancel(self._pump_after)
+            except Exception:
+                pass
+            self._pump_after = None
+        self._clear_selection()
+        self._page_views.clear()
+        self._photos.clear()
+        self._page_payloads.clear()
+        self._page_count = 0
+        self._loaded_count = 0
+        self._failed_count = 0
+        self._doc_path = None
+        try:
+            if self._doc is not None:
+                self._doc.close()
+        except Exception:
+            pass
+        self._doc = None
+        self._canvas.delete("all")
+        self._canvas.configure(scrollregion=(0, 0, 0, 0))
+        self._message_var.set("PDF viewer ready")
+        self._status_cb("PDF viewer ready")
+
+    def load_pdf(self, path: str) -> None:
+        if fitz is None or Image is None or ImageTk is None:
+            self.show_message("PDF support requires PyMuPDF and Pillow.")
+            self._status_cb("PDF viewer unavailable: missing PyMuPDF or Pillow")
+            return
+
+        norm = normalize(path)
+        if not os.path.isfile(norm):
+            self.show_message("The selected PDF no longer exists.")
+            self._status_cb("Selected PDF no longer exists")
+            return
+
+        try:
+            doc = fitz.open(norm)
+        except Exception as exc:
+            self.show_message(f"Unable to open PDF: {exc}")
+            self._status_cb(f"PDF open error: {exc}")
+            return
+
+        self.unload()
+        self._doc = doc
+        self._doc_path = norm
+        self._page_count = doc.page_count
+        self._loaded_count = 0
+        self._failed_count = 0
+        self._load_token += 1
+        token = self._load_token
+        self._canvas.delete("all")
+        self._canvas.configure(scrollregion=(0, 0, 0, 0))
+        self._render_loading_state()
+        self._emit_progress("loading")
+
+        self._worker = threading.Thread(
+            target=self._render_all_pages,
+            args=(norm, token, self._page_count, self._zoom),
+            daemon=True,
+        )
+        self._worker.start()
+        self._ensure_queue_pump()
+
+    def copy_selection(self) -> str | None:
+        if not self._selection_text:
+            return None
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self._selection_text)
+        return "break"
+
+    def _ensure_queue_pump(self) -> None:
+        if self._pump_after is None:
+            self._pump_after = self.after(_QUEUE_TICK_MS, self._drain_queue)
+
+    def _drain_queue(self) -> None:
+        self._pump_after = None
+        while True:
+            try:
+                kind, token, payload = self._render_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            if token != self._load_token:
+                continue
+
+            if kind == "page":
+                self._append_page(payload, token)
+                self._emit_progress("loading")
+            elif kind == "page_skip":
+                self._failed_count += 1
+                if self._failed_count <= 3:
+                    page_no = payload.get("index", 0) + 1
+                    err = payload.get("error", "rendering error")
+                    self._status_cb(f"Skipped PDF page {page_no}: {err}")
+                self._emit_progress("loading")
+            elif kind == "done":
+                self._emit_progress("ready")
+            elif kind == "error":
+                self.show_message(payload)
+                self._status_cb(payload)
+
+        if self._doc is not None and (self._loaded_count + self._failed_count) < self._page_count:
+            self._ensure_queue_pump()
+
+    def _render_all_pages(self, path: str, token: int, page_count: int, zoom: float) -> None:
+        if fitz is None:
+            return
+        worker_doc = None
+        try:
+            worker_doc = fitz.open(path)
+            for index in range(page_count):
+                if token != self._load_token:
+                    return
+                try:
+                    payload = self._render_page(worker_doc, index, zoom)
+                    self._render_queue.put(("page", token, payload))
+                except Exception as exc:
+                    self._render_queue.put((
+                        "page_skip",
+                        token,
+                        {"index": index, "error": str(exc)},
+                    ))
+            self._render_queue.put(("done", token, None))
+        except Exception as exc:
+            self._render_queue.put(("error", token, f"PDF background rendering stopped: {exc}"))
+            self._render_queue.put(("done", token, None))
+        finally:
+            try:
+                if worker_doc is not None:
+                    worker_doc.close()
+            except Exception:
+                pass
+
+    def _render_page(self, doc, index: int, zoom: float) -> dict:
+        if fitz is None:
+            raise RuntimeError("PyMuPDF is unavailable.")
+        page = doc.load_page(index)
+        rect = page.rect
+        matrix = fitz.Matrix(zoom, zoom)
+        try:
+            pix = page.get_pixmap(matrix=matrix, alpha=False, annots=True)
+        except Exception:
+            pix = page.get_pixmap(matrix=matrix, alpha=False, annots=False)
+        return {
+            "index": index,
+            "png": pix.tobytes("png"),
+            "render_width": pix.width,
+            "render_height": pix.height,
+            "page_width": rect.width,
+            "page_height": rect.height,
+        }
+
+    def _append_page(self, payload: dict, token: int) -> None:
+        if token != self._load_token or Image is None or ImageTk is None:
+            return
+
+        self._page_payloads[payload["index"]] = payload
+
+        image = Image.open(io.BytesIO(payload["png"]))
+        photo = ImageTk.PhotoImage(image, master=self.root)
+        self._photos.append(photo)
+
+        y = _MARGIN_Y
+        if self._page_views:
+            previous = self._page_views[-1]
+            y = previous["y"] + previous["render_height"] + _PAGE_GAP
+
+        x = self._center_x(payload["render_width"])
+        shadow = self._canvas.create_rectangle(
+            x + 2,
+            y + 2,
+            x + payload["render_width"] + 2,
+            y + payload["render_height"] + 2,
+            fill=_BORDER,
+            outline="",
+        )
+        image_id = self._canvas.create_image(x, y, anchor="nw", image=photo)
+        border = self._canvas.create_rectangle(
+            x - 1,
+            y - 1,
+            x + payload["render_width"] + 1,
+            y + payload["render_height"] + 1,
+            outline=_BORDER,
+            width=1,
+        )
+        self._canvas.tag_lower(shadow, image_id)
+        self._canvas.tag_raise(border, image_id)
+
+        self._page_views.append({
+            "index": payload["index"],
+            "x": x,
+            "y": y,
+            "render_width": payload["render_width"],
+            "render_height": payload["render_height"],
+            "page_width": payload["page_width"],
+            "page_height": payload["page_height"],
+            "items": (shadow, image_id, border),
+        })
+        self._loaded_count = len(self._page_views)
+        self._recenter_pages()
+
+    def _on_mousewheel(self, event: tk.Event) -> str:
+        self._canvas.yview_scroll(int(-event.delta / 120), "units")
+        return "break"
+
+    def _on_shift_mousewheel(self, event: tk.Event) -> str:
+        self._canvas.xview_scroll(int(-event.delta / 120), "units")
+        return "break"
+
+    def _on_ctrl_mousewheel(self, event: tk.Event) -> str:
+        direction = 1 if event.delta > 0 else -1
+        factor = _ZOOM_STEP if direction > 0 else (1 / _ZOOM_STEP)
+        new_zoom = min(_ZOOM_MAX, max(_ZOOM_MIN, self._zoom * factor))
+        if abs(new_zoom - self._zoom) < 1e-9:
+            return "break"
+        self._zoom = new_zoom
+        self._status_cb(f"PDF zoom: {round(self._zoom * 100)}%")
+        if self._doc_path:
+            self.load_pdf(self._doc_path)
+        else:
+            self.show_message(f"PDF zoom set to {round(self._zoom * 100)}%")
+        return "break"
+
+    def _on_canvas_configure(self, event: tk.Event) -> None:
+        self._recenter_pages()
+
+    def _on_press(self, event: tk.Event) -> None:
+        if self._doc is None:
+            return
+        self._drag_anchor = (self._canvas.canvasx(event.x), self._canvas.canvasy(event.y))
+        self._drag_current = self._drag_anchor
+        self._clear_selection()
+
+    def _on_drag(self, event: tk.Event) -> None:
+        if self._drag_anchor is None:
+            return
+        self._drag_current = (self._canvas.canvasx(event.x), self._canvas.canvasy(event.y))
+        self._refresh_selection_visuals()
+
+    def _on_release(self, event: tk.Event) -> None:
+        if self._drag_anchor is None:
+            return
+        self._drag_current = (self._canvas.canvasx(event.x), self._canvas.canvasy(event.y))
+        self._refresh_selection_visuals()
+        self._selection_text = self._extract_selection_text()
+
+    def _clear_selection(self) -> None:
+        self._selection_text = ""
+        self._drag_anchor = None
+        self._drag_current = None
+        while self._selection_items:
+            self._canvas.delete(self._selection_items.pop())
+
+    def _refresh_selection_visuals(self) -> None:
+        while self._selection_items:
+            self._canvas.delete(self._selection_items.pop())
+
+        bbox = self._selection_bbox()
+        if bbox is None:
+            return
+        x1, y1, x2, y2 = bbox
+
+        for page in self._page_views:
+            px1 = page["x"]
+            py1 = page["y"]
+            px2 = px1 + page["render_width"]
+            py2 = py1 + page["render_height"]
+            ix1 = max(x1, px1)
+            iy1 = max(y1, py1)
+            ix2 = min(x2, px2)
+            iy2 = min(y2, py2)
+            if ix1 >= ix2 or iy1 >= iy2:
+                continue
+            rect_id = self._canvas.create_rectangle(
+                ix1,
+                iy1,
+                ix2,
+                iy2,
+                fill=_ACCENT,
+                outline=_ACCENT,
+                stipple="gray25",
+                width=1,
+            )
+            self._selection_items.append(rect_id)
+
+    def _selection_bbox(self) -> tuple[float, float, float, float] | None:
+        if self._drag_anchor is None or self._drag_current is None:
+            return None
+        x1, y1 = self._drag_anchor
+        x2, y2 = self._drag_current
+        if abs(x2 - x1) < 3 and abs(y2 - y1) < 3:
+            return None
+        return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
+
+    def _extract_selection_text(self) -> str:
+        if self._doc is None or fitz is None:
+            return ""
+        bbox = self._selection_bbox()
+        if bbox is None:
+            return ""
+        x1, y1, x2, y2 = bbox
+        parts: list[str] = []
+        for page_info in self._page_views:
+            px1 = page_info["x"]
+            py1 = page_info["y"]
+            px2 = px1 + page_info["render_width"]
+            py2 = py1 + page_info["render_height"]
+            ix1 = max(x1, px1)
+            iy1 = max(y1, py1)
+            ix2 = min(x2, px2)
+            iy2 = min(y2, py2)
+            if ix1 >= ix2 or iy1 >= iy2:
+                continue
+
+            rect = fitz.Rect(
+                (ix1 - px1) * page_info["page_width"] / page_info["render_width"],
+                (iy1 - py1) * page_info["page_height"] / page_info["render_height"],
+                (ix2 - px1) * page_info["page_width"] / page_info["render_width"],
+                (iy2 - py1) * page_info["page_height"] / page_info["render_height"],
+            )
+            try:
+                page = self._doc.load_page(page_info["index"])
+                text = page.get_text("text", clip=rect, sort=True).strip()
+            except Exception:
+                text = ""
+            if text:
+                parts.append(text)
+        return "\n\n".join(parts)
+
+    def _emit_progress(self, mode: str) -> None:
+        name = os.path.basename(to_display(self._doc_path or ""))
+        suffix = ""
+        if self._failed_count > 0:
+            suffix = f" ({self._failed_count} skipped)"
+        if mode == "ready":
+            if self._loaded_count == 0 and self._page_count > 0:
+                message = f"{name} — no pages could be rendered"
+            else:
+                message = (
+                    f"{name} — {self._loaded_count} / {self._page_count} page(s) ready"
+                    f"{suffix} at {round(self._zoom * 100)}%"
+                )
+        else:
+            message = (
+                f"Loading {name} — {self._loaded_count} / {self._page_count} "
+                f"page(s){suffix} at {round(self._zoom * 100)}%"
+            )
+        self.show_message(message)
+        self._status_cb(message)
+
+    def _render_loading_state(self) -> None:
+        self._canvas.delete("all")
+        width = max(self._canvas.winfo_width(), 320)
+        height = max(self._canvas.winfo_height(), 180)
+        self._canvas.create_text(
+            width / 2,
+            height / 2,
+            text="Loading PDF…",
+            fill=_TEXT_MUTE,
+            font=(_FONT, _SZ_S),
+        )
+        self._canvas.configure(scrollregion=(0, 0, width, height))
+
+    def _center_x(self, render_width: int) -> float:
+        viewport_width = max(self._canvas.winfo_width(), 0)
+        if viewport_width <= 0:
+            return _MARGIN_X
+        return max(_MARGIN_X, (viewport_width - render_width) / 2)
+
+    def _recenter_pages(self) -> None:
+        if not self._page_views:
+            return
+        max_right = 0
+        max_width = max((page["render_width"] for page in self._page_views), default=0)
+        for page in self._page_views:
+            new_x = self._center_x(page["render_width"])
+            dx = new_x - page["x"]
+            if abs(dx) > 0.01:
+                for item in page["items"]:
+                    self._canvas.move(item, dx, 0)
+                page["x"] = new_x
+            max_right = max(max_right, page["x"] + page["render_width"])
+        height = self._page_views[-1]["y"] + self._page_views[-1]["render_height"] + _MARGIN_Y
+        scroll_width = max(max_right + _MARGIN_X, max_width + (_MARGIN_X * 2))
+        self._canvas.configure(scrollregion=(0, 0, scroll_width, height))
