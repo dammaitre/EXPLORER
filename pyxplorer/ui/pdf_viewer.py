@@ -8,7 +8,7 @@ from tkinter import ttk
 from typing import Callable
 
 from ..core.longpath import normalize, to_display
-from ..settings import THEME as _T
+from ..settings import THEME as _T, SCROLL_SPEED
 
 try:
     fitz = importlib.import_module("fitz")
@@ -48,6 +48,7 @@ _ZOOM_MIN = 0.5
 _ZOOM_MAX = 3.0
 _ZOOM_STEP = 1.1
 _DEFAULT_ZOOM = 1.25
+_SCROLL_SPEED = SCROLL_SPEED
 
 
 class PDFViewer(ttk.Frame):
@@ -334,12 +335,20 @@ class PDFViewer(ttk.Frame):
         self._recenter_pages()
 
     def _on_mousewheel(self, event: tk.Event) -> str:
-        self._canvas.yview_scroll(int(-event.delta / 120), "units")
+        units = self._wheel_units(event.delta)
+        self._canvas.yview_scroll(units, "units")
         return "break"
 
     def _on_shift_mousewheel(self, event: tk.Event) -> str:
-        self._canvas.xview_scroll(int(-event.delta / 120), "units")
+        units = self._wheel_units(event.delta)
+        self._canvas.xview_scroll(units, "units")
         return "break"
+
+    def _wheel_units(self, delta: int) -> int:
+        units = int((-delta / 120) * _SCROLL_SPEED)
+        if units == 0 and delta != 0:
+            units = -1 if delta > 0 else 1
+        return units
 
     def _on_ctrl_mousewheel(self, event: tk.Event) -> str:
         direction = 1 if event.delta > 0 else -1

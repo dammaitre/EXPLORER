@@ -1,4 +1,5 @@
 {
+  "scroll_speed": 1.0,
   "theme": {
     "bg":              "#202020",
     "bg_dark":         "#161616",

@@ -13,7 +13,7 @@ from typing import Callable
 from ..core.longpath import normalize, to_display
 from ..core.fs import fmt_size
 from ..core import starred as _starred
-from ..settings import THEME as _T, EXT_SKIPPED
+from ..settings import THEME as _T, EXT_SKIPPED, SCROLL_SPEED
 
 _BG       = _T["bg"]
 _TEXT     = _T["text"]
@@ -24,6 +24,7 @@ _ROW_SEL  = _T["row_selected"]
 _DENIED   = "#7A4040"
 
 _MAX_ROWS = 500  # Phase 10 cap: show first 500, then a "load more" sentinel
+_SCROLL_SPEED = SCROLL_SPEED
 
 
 class MainFrame(ttk.Frame):
@@ -109,6 +110,7 @@ class MainFrame(ttk.Frame):
         self._tree.bind("<Control-Up>",       self._on_ctrl_up)
         self._tree.bind("<Control-Down>",     self._on_ctrl_down)
         self._tree.bind("<Button-2>",         self._on_middle_click)
+        self._tree.bind("<MouseWheel>",       self._on_mousewheel)
 
     # ------------------------------------------------------------------
     # Public API — navigation
@@ -535,3 +537,10 @@ class MainFrame(ttk.Frame):
             [sys.executable, "-m", "pyxplorer", target],
             **kwargs,
         )
+
+    def _on_mousewheel(self, event: tk.Event) -> str:
+        units = int((-event.delta / 120) * _SCROLL_SPEED)
+        if units == 0 and event.delta != 0:
+            units = -1 if event.delta > 0 else 1
+        self._tree.yview_scroll(units, "units")
+        return "break"

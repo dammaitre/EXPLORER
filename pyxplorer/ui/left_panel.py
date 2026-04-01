@@ -16,7 +16,7 @@ from pathlib import Path
 
 from ..core.longpath import normalize, to_display
 from ..core import starred as _starred
-from ..settings import THEME as _T, START_DIRS
+from ..settings import THEME as _T, START_DIRS, SCROLL_SPEED
 
 _BG_PANEL  = _T["bg_dark"]
 _BG_CURR   = _T["bg_entry"]
@@ -29,6 +29,7 @@ _RH_N      = _T["row_height_nav"]
 _DENIED    = "#7A4040"
 
 _DUMMY = "\x00dummy"   # sentinel text that identifies placeholder children
+_SCROLL_SPEED = SCROLL_SPEED
 
 
 class LeftPanel(ttk.Frame):
@@ -105,6 +106,7 @@ class LeftPanel(ttk.Frame):
         self._starred_list.pack(side=tk.TOP, fill=tk.X, padx=4)
         self._starred_list.bind("<Button-1>",        self._on_starred_click)
         self._starred_list.bind("<Double-Button-1>", self._on_starred_click)
+        self._starred_list.bind("<MouseWheel>",      self._on_starred_wheel)
 
         self._starred_sep = ttk.Separator(self, orient="horizontal")
         self._starred_sep.pack(side=tk.TOP, fill=tk.X, pady=2)
@@ -138,6 +140,7 @@ class LeftPanel(ttk.Frame):
         self._tree.bind("<Button-1>",        self._on_click)
         self._tree.bind("<Double-Button-1>", self._on_double_click)
         self._tree.bind("<Button-2>",        self._on_middle_click)
+        self._tree.bind("<MouseWheel>",      self._on_tree_wheel)
 
     # ------------------------------------------------------------------
     # Root population
@@ -336,6 +339,20 @@ class LeftPanel(ttk.Frame):
                 self.navigate_cb(path)
             if self.focus_back_cb:
                 self.focus_back_cb()
+
+    def _wheel_units(self, delta: int) -> int:
+        units = int((-delta / 120) * _SCROLL_SPEED)
+        if units == 0 and delta != 0:
+            units = -1 if delta > 0 else 1
+        return units
+
+    def _on_tree_wheel(self, event: tk.Event) -> str:
+        self._tree.yview_scroll(self._wheel_units(event.delta), "units")
+        return "break"
+
+    def _on_starred_wheel(self, event: tk.Event) -> str:
+        self._starred_list.yview_scroll(self._wheel_units(event.delta), "units")
+        return "break"
 
     # ------------------------------------------------------------------
     # Public API — called by App._navigate on every navigation

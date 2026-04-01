@@ -10,6 +10,7 @@ _SETTINGS_FILE = Path(__file__).parent / "settings.json"
 
 _DEFAULTS: dict = {
     "ext_skipped": [],
+    "scroll_speed": 1.0,
     "theme": {
         "bg":              "#202020",
         "bg_dark":         "#161616",
@@ -44,6 +45,12 @@ def _load() -> dict:
         raw = {}
 
     theme = {**_DEFAULTS["theme"], **raw.get("theme", {})}
+    try:
+        scroll_speed = float(raw.get("scroll_speed", _DEFAULTS["scroll_speed"]))
+    except (TypeError, ValueError):
+        scroll_speed = float(_DEFAULTS["scroll_speed"])
+    scroll_speed = max(0.1, min(10.0, scroll_speed))
+
     start_dirs = [
         os.path.expanduser(p)
         for p in raw.get("start_dirs", _DEFAULTS["start_dirs"])
@@ -55,7 +62,12 @@ def _load() -> dict:
         if isinstance(e, str) and e:
             e = e.lower().strip()
             ext_skipped.add(e if e.startswith(".") else f".{e}")
-    return {"theme": theme, "start_dirs": start_dirs, "ext_skipped": ext_skipped}
+    return {
+        "theme": theme,
+        "start_dirs": start_dirs,
+        "ext_skipped": ext_skipped,
+        "scroll_speed": scroll_speed,
+    }
 
 
 _cfg = _load()
@@ -63,3 +75,4 @@ _cfg = _load()
 THEME: dict       = _cfg["theme"]
 START_DIRS: list  = _cfg["start_dirs"]
 EXT_SKIPPED: set  = _cfg["ext_skipped"]   # lowercase extensions with leading dot
+SCROLL_SPEED: float = _cfg["scroll_speed"]
