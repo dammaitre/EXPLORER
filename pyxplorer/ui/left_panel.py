@@ -13,6 +13,7 @@ import string
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
+from typing import Callable
 
 from ..core.longpath import normalize, to_display
 from ..core import starred as _starred
@@ -46,7 +47,7 @@ class LeftPanel(ttk.Frame):
         self._path_nodes: dict[str, str] = {}          # normcase(path) → iid
         self._loaded: set[str] = set()                 # iids whose children have been loaded
         self._current_iid: str | None = None
-        self.focus_back_cb = None                      # set by App after layout is built
+        self.focus_back_cb: Callable[[], None] | None = None  # set by App after layout is built
 
         self._build()
         self._populate_roots()

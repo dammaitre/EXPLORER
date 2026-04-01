@@ -282,15 +282,33 @@ class MainFrame(ttk.Frame):
             if _starred.is_starred(self._item_data[iid]["path"])
         ]
 
-    def apply_heuristic_results(self, title: str, by_path: dict[str, str]) -> None:
+    def begin_heuristic_results(self, title: str) -> None:
+        """Show heuristic column and reset current values before a new run."""
         self._tree.heading("heur", text=title or "Heuristic", anchor="w")
         self._tree.column("heur", stretch=True, minwidth=120, width=180, anchor="w")
+        for row in self._all_rows:
+            row["heur_str"] = ""
+        for iid in self._item_data:
+            self._tree.set(iid, "heur", "")
+
+    def update_heuristic_value(self, path: str, value: str) -> None:
+        """Set heuristic value for one path and update row if visible."""
+        key = os.path.normcase(path)
+        iid = self._path_iids.get(key)
+        if iid and iid in self._item_data:
+            row = self._item_data[iid]
+            row["heur_str"] = value
+            self._tree.set(iid, "heur", value)
 
         for row in self._all_rows:
-            row["heur_str"] = by_path.get(row["path"], "")
+            if os.path.normcase(row["path"]) == key:
+                row["heur_str"] = value
+                break
 
-        for iid, row in self._item_data.items():
-            self._tree.set(iid, "heur", row.get("heur_str", ""))
+    def apply_heuristic_results(self, title: str, by_path: dict[str, str]) -> None:
+        self.begin_heuristic_results(title)
+        for path, value in by_path.items():
+            self.update_heuristic_value(path, value)
 
     def clear_heuristic_column(self) -> None:
         self._tree.heading("heur", text="", anchor="w")

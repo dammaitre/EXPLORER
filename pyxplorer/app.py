@@ -225,6 +225,7 @@ class App:
         self._lower_visible: bool = False
         self._lower_height: int = _LOWER_DEFAULT_H
         self._heuristics_win: HeuristicsWindow | None = None
+        self._heuristic_run_token: int = 0
 
         self._build_layout()
         bind_keys(
@@ -397,6 +398,7 @@ class App:
         self.status_bar.set_status("Heuristics window opened")
 
     def _on_heuristics_close(self) -> None:
+        self._heuristic_run_token += 1
         self._heuristics_win = None
         self.main_frame.clear_heuristic_column()
         self.status_bar.set_status("Heuristics window closed")
@@ -407,25 +409,43 @@ class App:
             self.status_bar.set_status("No items to evaluate")
             return
 
-        self.status_bar.set_status(f"Running heuristic '{script_name}' on {len(rows)} item(s)…")
+        self._heuristic_run_token += 1
+        token = self._heuristic_run_token
+        total = len(rows)
+        self.main_frame.begin_heuristic_results(script_name)
+
+        self.status_bar.set_status(f"Running heuristic '{script_name}' on {total} item(s)…")
 
         def _worker() -> None:
-            results: dict[str, str] = {}
+            done = 0
             for row in rows:
                 path = row.get("path")
                 if not path:
                     continue
                 try:
-                    results[path] = run_heuristic(script_path, to_display(path))
+                    value = run_heuristic(script_path, to_display(path))
                 except subprocess.TimeoutExpired:
-                    results[path] = "ERR: timeout"
+                    value = "ERR: timeout"
                 except Exception as exc:
-                    results[path] = f"ERR: {str(exc)[:80]}"
+                    value = f"ERR: {str(exc)[:80]}"
+
+                done += 1
+
+                def _update_one(result_path=path, result_value=value, n=done) -> None:
+                    if token != self._heuristic_run_token:
+                        return
+                    self.main_frame.update_heuristic_value(result_path, result_value)
+                    self.status_bar.set_status(
+                        f"Running heuristic '{script_name}'… {n}/{total}"
+                    )
+
+                self.root.after(0, _update_one)
 
             def _finish() -> None:
-                self.main_frame.apply_heuristic_results(script_name, results)
+                if token != self._heuristic_run_token:
+                    return
                 self.status_bar.set_status(
-                    f"Heuristic '{script_name}' complete — {len(results)} item(s)"
+                    f"Heuristic '{script_name}' complete — {done} item(s)"
                 )
 
             self.root.after(0, _finish)
