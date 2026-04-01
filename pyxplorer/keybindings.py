@@ -358,8 +358,23 @@ def bind_keys(
         main_frame._tree.focus_set()
         return "break"
 
-    root.bind("<Alt-Up>",   lambda e: _jump_starred(-1))
-    root.bind("<Alt-Down>", lambda e: _jump_starred(+1))
+    def _bind_star_jump(widget, sequence: str, direction: int) -> None:
+        widget.bind(sequence, lambda e, d=direction: _jump_starred(d, e))
+
+    # Tk modifier names vary by platform/keyboard layout; bind common aliases.
+    jump_sequences = [
+        ("<Alt-Up>", -1),
+        ("<Alt-Down>", +1),
+        ("<Alt-KeyPress-Up>", -1),
+        ("<Alt-KeyPress-Down>", +1),
+        ("<Meta-Up>", -1),
+        ("<Meta-Down>", +1),
+        ("<Option-Up>", -1),
+        ("<Option-Down>", +1),
+    ]
+    for seq, direction in jump_sequences:
+        _bind_star_jump(root, seq, direction)
+        _bind_star_jump(main_frame._tree, seq, direction)
 
     # ── Navigation ─────────────────────────────────────────────────────────
     def _focus_main_and_run(fn):
