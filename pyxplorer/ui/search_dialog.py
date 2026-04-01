@@ -128,6 +128,7 @@ class SearchDialog:
 
         self._tree.bind("<ButtonRelease-1>", self._on_left_click)
         self._tree.bind("<Button-2>",        self._on_middle_click)
+        self._tree.bind("<ButtonRelease-2>", self._on_middle_click)
         self._tree.bind("<Double-1>",        self._on_double_click)
         self._tree.bind("<Return>",          self._on_double_click)
         # Ctrl+Shift+C: capital C in tkinter means Shift is held
@@ -267,7 +268,7 @@ class SearchDialog:
         else:
             self._open_file(full_path)
 
-    # Middle click — navigate to the parent directory of the result
+    # Middle click — open result directory in a new Pyxplorer window
     def _on_middle_click(self, event: tk.Event) -> None:
         iid = self._tree.identify_row(event.y)
         if not iid:
@@ -275,9 +276,13 @@ class SearchDialog:
         result = self._result_paths(iid)
         if not result:
             return
-        _, parent, _ = result
-        self._navigate_cb(parent)
-        self._dlg.lift()
+        full_path, parent, ftype = result
+        target = full_path if ftype == "dir" else parent
+
+        kwargs: dict = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        subprocess.Popen([sys.executable, "-m", "pyxplorer", target], **kwargs)
 
     # Double-click / Enter — same as before: navigate (to dir or file's parent)
     def _on_double_click(self, event=None) -> None:

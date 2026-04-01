@@ -23,6 +23,7 @@ _SZ_S = _T["font_size_small"]
 
 _READ_SIZE = 2048
 _PUMP_MS = 30
+_INPUT_BAR_H = 44
 
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _OSC_RE = re.compile(r"\x1b\].*?(\x07|\x1b\\)", flags=re.DOTALL)
@@ -43,8 +44,11 @@ class EmbeddedTerminal(ttk.Frame):
         self._build()
 
     def _build(self) -> None:
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
         header = ttk.Frame(self, style="LowerContent.TFrame")
-        header.pack(side=tk.TOP, fill=tk.X)
+        header.grid(row=0, column=0, sticky="ew")
 
         self._title_var = tk.StringVar(value="Terminal")
         ttk.Label(
@@ -57,7 +61,9 @@ class EmbeddedTerminal(ttk.Frame):
         ).pack(side=tk.LEFT)
 
         body = ttk.Frame(self, style="LowerContent.TFrame")
-        body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        body.grid(row=1, column=0, sticky="nsew")
+        body.grid_rowconfigure(0, weight=1)
+        body.grid_columnconfigure(0, weight=1)
 
         self._text = tk.Text(
             body,
@@ -73,22 +79,23 @@ class EmbeddedTerminal(ttk.Frame):
             pady=8,
             undo=False,
         )
-        self._text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._text.grid(row=0, column=0, sticky="nsew")
+        self._text.configure(state="disabled")
 
         vsb = ttk.Scrollbar(body, orient="vertical", command=self._text.yview)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        vsb.grid(row=0, column=1, sticky="ns")
         self._text.configure(yscrollcommand=vsb.set)
 
-        ttk.Separator(self, orient="horizontal").pack(side=tk.TOP, fill=tk.X)
+        ttk.Separator(self, orient="horizontal").grid(row=2, column=0, sticky="ew")
 
         entry_host = tk.Frame(
             self,
             background=_BG_DARK,
-            height=42,
+            height=_INPUT_BAR_H,
             highlightthickness=0,
             borderwidth=0,
         )
-        entry_host.pack(side=tk.TOP, fill=tk.X)
+        entry_host.grid(row=3, column=0, sticky="ew")
         entry_host.pack_propagate(False)
 
         entry_row = tk.Frame(
@@ -149,7 +156,9 @@ class EmbeddedTerminal(ttk.Frame):
 
         self._cwd_display = to_display(norm)
         self._title_var.set(f"Terminal — {self._cwd_display}")
+        self._set_text_state("normal")
         self._text.delete("1.0", tk.END)
+        self._set_text_state("disabled")
         self._append_text(f"Starting PowerShell in {self._cwd_display}\n")
 
         try:
@@ -227,8 +236,10 @@ class EmbeddedTerminal(ttk.Frame):
     def _append_text(self, text: str) -> None:
         if not text:
             return
+        self._set_text_state("normal")
         self._text.insert(tk.END, text)
         self._text.see(tk.END)
+        self._set_text_state("disabled")
 
     def _on_entry_return(self, event=None) -> str:
         command = self._cmd_var.get()
@@ -269,6 +280,12 @@ class EmbeddedTerminal(ttk.Frame):
             self.root.clipboard_clear()
             self.root.clipboard_append(selected)
         return "break"
+
+    def _set_text_state(self, state: str) -> None:
+        try:
+            self._text.configure(state=state)
+        except Exception:
+            pass
 
     @staticmethod
     def _clean_ansi(text: str) -> str:
