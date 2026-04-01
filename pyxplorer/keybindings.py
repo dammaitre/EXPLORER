@@ -4,11 +4,17 @@ All shortcuts fire regardless of which widget has focus, except where
 a text entry is focused (clipboard ops are guarded to avoid conflicts).
 """
 import os
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
 from .core.longpath import normalize, to_display
 from .core.fs import copy_items, move_items, make_dir, delete_items, rename_item
+from .core.shared_clipboard import (
+    load_shared_clipboard,
+    save_shared_clipboard,
+    clear_shared_clipboard,
+)
 from .ui.search_dialog import SearchDialog
 from .settings import THEME as _T
 
@@ -30,38 +36,76 @@ def _in_entry(root: tk.Tk) -> bool:
 
 def _do_copy(state) -> None:
     if state.selection:
-        state.clipboard = {"mode": "copy", "paths": list(state.selection)}
+        payload = {"mode": "copy", "paths": list(state.selection)}
+        state.clipboard = payload
+        save_shared_clipboard(payload["mode"], payload["paths"])
 
 
 def _do_cut(state) -> None:
     if state.selection:
-        state.clipboard = {"mode": "cut", "paths": list(state.selection)}
+        payload = {"mode": "cut", "paths": list(state.selection)}
+        state.clipboard = payload
+        save_shared_clipboard(payload["mode"], payload["paths"])
 
 
-_paste_busy = False   # simple re-entrancy guard (robocopy is synchronous)
+_paste_busy = False   # re-entrancy guard for async paste worker
 
 
-def _do_paste(state, root: tk.Tk, refresh_cb) -> None:
+def _do_paste(state, root: tk.Tk, refresh_cb, status_cb) -> None:
     global _paste_busy
     if _paste_busy:
+        status_cb("Paste already running…")
         return
-    mode  = state.clipboard.get("mode")
-    paths = state.clipboard.get("paths", [])
+
+    shared = load_shared_clipboard()
+    mode = shared.get("mode")
+    paths = shared.get("paths", [])
+    if mode and paths:
+        state.clipboard = {"mode": mode, "paths": list(paths)}
+    else:
+        mode = state.clipboard.get("mode")
+        paths = state.clipboard.get("paths", [])
+
     if not mode or not paths:
+        status_cb("Clipboard is empty")
         return
+
     dst = state.current_dir
     _paste_busy = True
-    try:
-        if mode == "copy":
-            copy_items(paths, dst)
-        else:
-            move_items(paths, dst)
-            state.clipboard = {"mode": None, "paths": []}
-    except Exception as exc:
-        messagebox.showerror("Paste error", str(exc), parent=root)
-    finally:
-        _paste_busy = False
-    refresh_cb()
+    verb = "Copying" if mode == "copy" else "Moving"
+    status_cb(f"{verb} {len(paths)} item(s)…")
+
+    def _worker() -> None:
+        nonlocal mode, paths, dst
+        err: Exception | None = None
+        try:
+            if mode == "copy":
+                copy_items(paths, dst)
+            else:
+                move_items(paths, dst)
+        except Exception as exc:
+            err = exc
+
+        def _finish() -> None:
+            global _paste_busy
+            _paste_busy = False
+            if err is not None:
+                status_cb(f"Paste failed: {err}")
+                messagebox.showerror("Paste error", str(err), parent=root)
+                return
+
+            if mode == "cut":
+                state.clipboard = {"mode": None, "paths": []}
+                clear_shared_clipboard()
+            else:
+                save_shared_clipboard(mode, paths)
+
+            status_cb(f"{verb} complete — {len(paths)} item(s)")
+            refresh_cb()
+
+        root.after(0, _finish)
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 # ── Path copy to system clipboard ──────────────────────────────────────────────
@@ -159,6 +203,7 @@ def bind_keys(
     open_notes_cb=None,
     hide_lower_cb=None,
     close_cb=None,
+    status_cb=None,
 ) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
@@ -169,10 +214,13 @@ def bind_keys(
         """Wrap fn so it silently does nothing when a text entry is focused."""
         return lambda e=None: None if _in_entry(root) else fn()
 
+    if status_cb is None:
+        status_cb = lambda message: None
+
     # ── File clipboard ─────────────────────────────────────────────────
     root.bind("<Control-c>", _guard(lambda: _do_copy(state)))
     root.bind("<Control-x>", _guard(lambda: _do_cut(state)))
-    root.bind("<Control-v>", _guard(lambda: _do_paste(state, root, _refresh)))
+    root.bind("<Control-v>", _guard(lambda: _do_paste(state, root, _refresh, status_cb)))
 
     # ── Path string to system clipboard (Ctrl+Shift+C) ─────────────────
     # In tkinter, capital letter in binding implies Shift is held

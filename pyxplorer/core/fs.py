@@ -33,6 +33,27 @@ def _unique_copy_name(dst_dir: str, name: str) -> str:
     return candidate
 
 
+def _unique_copy_suffix_name(dst_dir: str, name: str) -> str:
+    """Return a non-conflicting path using a '_copy' suffix.
+
+    Examples:
+    - file.txt      -> file_copy.txt
+    - file_copy.txt -> file_copy_2.txt
+    """
+    base, ext = os.path.splitext(name)
+    candidate = os.path.join(dst_dir, f"{base}_copy{ext}")
+    n = 2
+    while os.path.exists(normalize(candidate)):
+        candidate = os.path.join(dst_dir, f"{base}_copy_{n}{ext}")
+        n += 1
+    return candidate
+
+
+def _is_file_exists_error(err_text: str) -> bool:
+    text = (err_text or "").lower()
+    return "error 80" in text or "already exists" in text or "file exists" in text
+
+
 _ROBOCOPY_FLAGS = ["/R:3", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP"]
 
 
@@ -81,7 +102,13 @@ def copy_items(src_paths: list[str], dst_dir: str) -> None:
                 _run_robocopy([s_display, dest_display, "/E", "/COPY:DAT"] + _ROBOCOPY_FLAGS)
             else:
                 src_dir = str(Path(s_display).parent)
-                _run_robocopy([src_dir, dst_display, name, "/COPY:DAT"] + _ROBOCOPY_FLAGS)
+                try:
+                    _run_robocopy([src_dir, dst_display, name, "/COPY:DAT"] + _ROBOCOPY_FLAGS)
+                except OSError as exc:
+                    if not _is_file_exists_error(str(exc)):
+                        raise
+                    unique = _unique_copy_suffix_name(dst_display, name)
+                    shutil.copy2(s, normalize(unique))
         else:
             dest = normalize(os.path.join(dst, os.path.basename(s)))
             if os.path.normcase(s) == os.path.normcase(dest):

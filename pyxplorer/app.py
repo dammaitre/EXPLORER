@@ -229,6 +229,7 @@ class App:
             open_notes_cb=self.open_notes_panel,
             hide_lower_cb=self.hide_lower_panel,
             close_cb=self.close,
+            status_cb=self.status_bar.set_status,
         )
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
