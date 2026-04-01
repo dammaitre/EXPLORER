@@ -201,6 +201,7 @@ def bind_keys(
     open_pdf_cb=None,
     open_terminal_cb=None,
     open_notes_cb=None,
+    toggle_heuristics_cb=None,
     hide_lower_cb=None,
     close_cb=None,
     status_cb=None,
@@ -291,6 +292,11 @@ def bind_keys(
     if open_notes_cb is not None:
         root.bind("<Control-Alt-n>", lambda e: open_notes_cb())
         root.bind("<Control-Alt-N>", lambda e: open_notes_cb())
+
+    # ── Heuristics window toggle (Ctrl+H) ────────────────────────────
+    if toggle_heuristics_cb is not None:
+        root.bind("<Control-h>", lambda e: toggle_heuristics_cb())
+        root.bind("<Control-H>", lambda e: toggle_heuristics_cb())
 
     # ── Hide lower pane (Escape) ───────────────────────────────────────
     if hide_lower_cb is not None:

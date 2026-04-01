@@ -54,7 +54,7 @@ class MainFrame(ttk.Frame):
     def _build(self) -> None:
         self._tree = ttk.Treeview(
             self,
-            columns=("size", "pct"),
+            columns=("heur", "size", "pct"),
             selectmode="extended",
         )
 
@@ -65,9 +65,11 @@ class MainFrame(ttk.Frame):
                            command=lambda: self._sort_by("size"))
         self._tree.heading("pct",   text="%",     anchor="e",
                            command=lambda: self._sort_by("pct"))
+        self._tree.heading("heur", text="", anchor="w")
 
         # ── Columns ───────────────────────────────────────────────────
         self._tree.column("#0",   stretch=True,  minwidth=180, width=420, anchor="w")
+        self._tree.column("heur", stretch=False, minwidth=0, width=0, anchor="w")
         self._tree.column("size", stretch=False, minwidth=80,  width=110, anchor="e")
         self._tree.column("pct",  stretch=False, minwidth=50,  width=70,  anchor="e")
 
@@ -125,7 +127,7 @@ class MainFrame(ttk.Frame):
             raw_entries = list(os.scandir(norm))
         except PermissionError:
             self._tree.insert("", "end", text="  \U0001f512  Access denied",
-                              values=("", ""), tags=("denied",))
+                              values=("", "", ""), tags=("denied",))
             return
         except FileNotFoundError:
             # Directory was deleted or renamed while we were viewing it.
@@ -136,7 +138,7 @@ class MainFrame(ttk.Frame):
             return
         except OSError as exc:
             self._tree.insert("", "end", text=f"  Error: {exc}",
-                              values=("", ""), tags=("denied",))
+                              values=("", "", ""), tags=("denied",))
             return
 
         dirs, files = [], []
@@ -154,6 +156,7 @@ class MainFrame(ttk.Frame):
                 "name":       entry.name,
                 "is_dir":     True,
                 "size_bytes": -1,       # -1 = pending scan
+                "heur_str":   "",
                 "size_str":   "—",
                 "pct_str":    "—",
                 "path":       entry.path,
@@ -173,6 +176,7 @@ class MainFrame(ttk.Frame):
                 "name":       entry.name,
                 "is_dir":     False,
                 "size_bytes": size,
+                "heur_str":   "",
                 "size_str":   size_str,
                 "pct_str":    "—",
                 "path":       entry.path,
@@ -239,6 +243,28 @@ class MainFrame(ttk.Frame):
                 total += row["size_bytes"]
         return total
 
+    def get_current_rows(self) -> list[dict]:
+        return [dict(r) for r in self._all_rows]
+
+    def apply_heuristic_results(self, title: str, by_path: dict[str, str]) -> None:
+        self._tree.heading("heur", text=title or "Heuristic", anchor="w")
+        self._tree.column("heur", stretch=True, minwidth=120, width=180, anchor="w")
+
+        for row in self._all_rows:
+            row["heur_str"] = by_path.get(row["path"], "")
+
+        for iid, row in self._item_data.items():
+            value = row.get("heur_str", "")
+            self._tree.set(iid, "heur", value)
+
+    def clear_heuristic_column(self) -> None:
+        self._tree.heading("heur", text="", anchor="w")
+        self._tree.column("heur", stretch=False, minwidth=0, width=0, anchor="w")
+        for row in self._all_rows:
+            row["heur_str"] = ""
+        for iid in self._item_data:
+            self._tree.set(iid, "heur", "")
+
     # ------------------------------------------------------------------
     # Rendering & sorting
     # ------------------------------------------------------------------
@@ -260,7 +286,7 @@ class MainFrame(ttk.Frame):
                 "", "end",
                 text=f"  {row['name']}",
                 image=img or "",
-                values=(row["size_str"], row["pct_str"]),
+                values=(row.get("heur_str", ""), row["size_str"], row["pct_str"]),
                 tags=(row["tag"],),
             )
             self._item_data[iid] = row
@@ -271,7 +297,7 @@ class MainFrame(ttk.Frame):
                 "", "end",
                 text=f"  … {len(self._hidden_rows)} more items — click to load",
                 image="",
-                values=("", ""),
+                values=("", "", ""),
                 tags=("more",),
             )
 
@@ -299,7 +325,7 @@ class MainFrame(ttk.Frame):
                 "", "end",
                 text=f"  {row['name']}",
                 image=img or "",
-                values=(row["size_str"], row["pct_str"]),
+                values=(row.get("heur_str", ""), row["size_str"], row["pct_str"]),
                 tags=(row["tag"],),
             )
             self._item_data[iid] = row

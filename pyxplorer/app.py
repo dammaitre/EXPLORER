@@ -4,6 +4,8 @@ App — root window, Win11 ttk styling, 3-panel layout, navigation controller.
 import os
 import sys
 import queue
+import threading
+import subprocess
 import tkinter as tk
 from tkinter import ttk
 
@@ -15,9 +17,11 @@ from .ui.top_bar import TopBar
 from .ui.left_panel import LeftPanel
 from .ui.main_frame import MainFrame
 from .ui.lower_panel import LowerPanel
+from .ui.heuristics_window import HeuristicsWindow
 from .ui.status_bar import StatusBar
 from .keybindings import bind_keys
 from .settings import THEME as _T
+from .core.heuristics import run_heuristic
 
 # ── Palette & font vars (sourced from settings.json) ──────────────────────────
 BG        = _T["bg"]
@@ -217,6 +221,7 @@ class App:
         self._scanner:    SizeScanner = SizeScanner(self._scan_queue)
         self._scan_token: CancelToken | None = None
         self._lower_visible: bool = False
+        self._heuristics_win: HeuristicsWindow | None = None
 
         self._build_layout()
         bind_keys(
@@ -227,6 +232,7 @@ class App:
             open_pdf_cb=self.open_pdf_panel,
             open_terminal_cb=self.open_terminal_panel,
             open_notes_cb=self.open_notes_panel,
+            toggle_heuristics_cb=self.toggle_heuristics_window,
             hide_lower_cb=self.hide_lower_panel,
             close_cb=self.close,
             status_cb=self.status_bar.set_status,
@@ -345,11 +351,61 @@ class App:
         self.lower_panel.request_notes()
 
     def close(self) -> None:
+        if self._heuristics_win and self._heuristics_win.alive:
+            self._heuristics_win.close()
         if self._scan_token:
             self._scan_token.cancel()
             self._scan_token = None
         self.lower_panel.shutdown()
         self.root.destroy()
+
+    def toggle_heuristics_window(self) -> None:
+        if self._heuristics_win and self._heuristics_win.alive:
+            self._heuristics_win.close()
+            return
+
+        self._heuristics_win = HeuristicsWindow(
+            self.root,
+            on_run_cb=self._run_heuristic_script,
+            on_close_cb=self._on_heuristics_close,
+        )
+        self.status_bar.set_status("Heuristics window opened")
+
+    def _on_heuristics_close(self) -> None:
+        self._heuristics_win = None
+        self.main_frame.clear_heuristic_column()
+        self.status_bar.set_status("Heuristics window closed")
+
+    def _run_heuristic_script(self, script_path: str, script_name: str) -> None:
+        rows = self.main_frame.get_current_rows()
+        if not rows:
+            self.status_bar.set_status("No items to evaluate")
+            return
+
+        self.status_bar.set_status(f"Running heuristic '{script_name}' on {len(rows)} item(s)…")
+
+        def _worker() -> None:
+            results: dict[str, str] = {}
+            for row in rows:
+                path = row.get("path")
+                if not path:
+                    continue
+                try:
+                    results[path] = run_heuristic(script_path, to_display(path))
+                except subprocess.TimeoutExpired:
+                    results[path] = "ERR: timeout"
+                except Exception as exc:
+                    results[path] = f"ERR: {str(exc)[:80]}"
+
+            def _finish() -> None:
+                self.main_frame.apply_heuristic_results(script_name, results)
+                self.status_bar.set_status(
+                    f"Heuristic '{script_name}' complete — {len(results)} item(s)"
+                )
+
+            self.root.after(0, _finish)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Navigation controller (single point of truth)
