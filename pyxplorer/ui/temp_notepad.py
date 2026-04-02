@@ -6,6 +6,7 @@ from typing import Callable
 
 from ..settings import THEME as _T
 from .scroll_utils import make_autohide_pack_setter
+from ..core.appdirs import pyxplorer_data_dir
 
 _BG_DARK = _T["bg_dark"]
 _TEXT = _T["text"]
@@ -167,7 +168,4 @@ class TempNotepad(ttk.Frame):
 
     @staticmethod
     def _build_temp_path() -> Path:
-        local_app_data = os.environ.get("LOCALAPPDATA")
-        if not local_app_data:
-            local_app_data = str(Path.home() / "AppData" / "Local")
-        return Path(local_app_data) / "Pyxplorer" / "temp.txt"
+        return pyxplorer_data_dir() / "temp.txt"

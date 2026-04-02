@@ -1,6 +1,6 @@
 """
 Starred-paths store: persists a set of absolute paths to
-%LOCALAPPDATA%/Pyxplorer/starred.json.
+the per-user Pyxplorer data directory.
 
 Public API
 ----------
@@ -14,11 +14,11 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from .appdirs import pyxplorer_data_dir
 
 
 def _store_path() -> Path:
-    local_app = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    return Path(local_app) / "Pyxplorer" / "starred.json"
+    return pyxplorer_data_dir() / "starred.json"
 
 
 def _restore_leaf_case(path: str) -> str:

@@ -1,4 +1,5 @@
 import os
+import sys
 import queue
 import re
 import threading
@@ -13,7 +14,10 @@ from .scroll_utils import make_autohide_grid_setter
 try:
     from winpty import PtyProcess
 except ImportError:
-    PtyProcess = None
+    try:
+        from ptyprocess import PtyProcess
+    except ImportError:
+        PtyProcess = None
 
 _BG_DARK = _T["bg_dark"]
 _TEXT = _T.get("terminal_text", _T["text"])
@@ -147,8 +151,8 @@ class EmbeddedTerminal(ttk.Frame):
         self.kill()
 
         if PtyProcess is None:
-            self._append_text("pywinpty is not installed in this environment.\n")
-            self._status_cb("Terminal unavailable: missing pywinpty")
+            self._append_text("No PTY backend is installed (need pywinpty or ptyprocess).\n")
+            self._status_cb("Terminal unavailable: missing PTY backend")
             return
 
         norm = normalize(cwd)
@@ -160,13 +164,16 @@ class EmbeddedTerminal(ttk.Frame):
         self._set_text_state("normal")
         self._text.delete("1.0", tk.END)
         self._set_text_state("disabled")
-        self._append_text(f"Starting PowerShell in {self._cwd_display}\n")
+
+        shell_argv = self._shell_argv()
+        shell_label = " ".join(shell_argv)
+        self._append_text(f"Starting terminal ({shell_label}) in {self._cwd_display}\n")
 
         try:
-            self._proc = PtyProcess.spawn(["powershell.exe", "-NoLogo"], cwd=norm)
+            self._proc = PtyProcess.spawn(shell_argv, cwd=norm)
         except Exception as exc:
             self._proc = None
-            self._append_text(f"Unable to start PowerShell: {exc}\n")
+            self._append_text(f"Unable to start terminal shell: {exc}\n")
             self._status_cb(f"Terminal start error: {exc}")
             return
 
@@ -176,6 +183,14 @@ class EmbeddedTerminal(ttk.Frame):
         self._ensure_pump()
         self._status_cb(f"Terminal started in {self._cwd_display}")
         self.focus_terminal()
+
+    def _shell_argv(self) -> list[str]:
+        if sys.platform == "win32":
+            return ["powershell.exe", "-NoLogo"]
+        shell = os.environ.get("SHELL")
+        if shell:
+            return [shell, "-i"]
+        return ["/bin/bash", "-i"]
 
     def kill(self) -> None:
         self._running = False

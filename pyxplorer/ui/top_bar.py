@@ -2,6 +2,7 @@
 Phase 2 — Top bar: editable path entry, 10-item history dropdown, breadcrumbs, Ctrl+R dialog.
 """
 import os
+import sys
 import subprocess
 import tkinter as tk
 from tkinter import ttk
@@ -102,10 +103,14 @@ class TopBar(ttk.Frame):
             if not val:
                 return
             try:
-                os.startfile(normalize(val))
+                if sys.platform == "win32":
+                    os.startfile(normalize(val))
+                else:
+                    cmd = "open" if sys.platform == "darwin" else "xdg-open"
+                    subprocess.Popen([cmd, val])
             except Exception:
                 try:
-                    subprocess.run([val], shell=True)
+                    subprocess.run(val, shell=True)
                 except Exception:
                     pass
 

@@ -3,7 +3,7 @@ from tkinter import ttk
 from pathlib import Path
 from typing import Callable
 
-from ..core.heuristics import list_heuristic_scripts
+from ..core.heuristics import list_heuristic_scripts, scripts_dir
 from ..settings import THEME as _T
 
 _FONT = _T["font_family"]
@@ -63,7 +63,7 @@ class HeuristicsWindow:
         if not self._scripts:
             ttk.Label(
                 self._list_frame,
-                text="No .py scripts found in %LOCALAPPDATA%\\Pyxplorer\\scripts",
+                text=f"No .py scripts found in {scripts_dir()}",
                 justify=tk.LEFT,
                 anchor="w",
                 font=(_FONT, _SZ_S),

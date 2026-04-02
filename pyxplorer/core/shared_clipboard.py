@@ -1,13 +1,10 @@
 import json
-import os
 from pathlib import Path
+from .appdirs import pyxplorer_data_dir
 
 
 def _clipboard_path() -> Path:
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        local_app_data = str(Path.home() / "AppData" / "Local")
-    return Path(local_app_data) / "Pyxplorer" / "clipboard.json"
+    return pyxplorer_data_dir() / "clipboard.json"
 
 
 def load_shared_clipboard() -> dict:

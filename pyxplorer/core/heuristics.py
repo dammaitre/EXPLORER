@@ -2,13 +2,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from .appdirs import pyxplorer_data_dir
 
 
 def scripts_dir() -> Path:
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        local_app_data = str(Path.home() / "AppData" / "Local")
-    return Path(local_app_data) / "Pyxplorer" / "scripts"
+    return pyxplorer_data_dir() / "scripts"
 
 
 def list_heuristic_scripts() -> list[Path]:

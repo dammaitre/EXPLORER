@@ -9,7 +9,8 @@ version = "0.1.0"
 dependencies = [
 	"Pillow",
 	"PyMuPDF",
-	"pywinpty",
+	"ptyprocess",
+	"pywinpty; sys_platform == 'win32'",
 ]
 
 [project.scripts]
