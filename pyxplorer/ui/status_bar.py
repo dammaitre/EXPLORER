@@ -30,6 +30,7 @@ class StatusBar(ttk.Frame):
         self._total_size: int  = 0
         self._n_selected: int  = 0
         self._sel_size:   int  = 0
+        self._transfer_active: bool = False
 
         self._build()
 
@@ -46,6 +47,22 @@ class StatusBar(ttk.Frame):
             anchor="w",
             padding=(8, 0),
         ).pack(side=tk.LEFT, fill=tk.Y)
+
+        self._pct_var = tk.StringVar(value="")
+        self._pct_label = ttk.Label(
+            self,
+            textvariable=self._pct_var,
+            style="StatusBar.TLabel",
+            anchor="e",
+            width=5,
+        )
+        self._progress = ttk.Progressbar(
+            self,
+            orient="horizontal",
+            mode="determinate",
+            maximum=100,
+            length=220,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,15 +91,38 @@ class StatusBar(ttk.Frame):
 
     def set_status(self, message: str) -> None:
         """Generic one-off message (used before any scan runs)."""
-        if not self._scanning:
+        if not self._scanning and not self._transfer_active:
             self._text_var.set(f"  {message}")
+
+    def start_transfer(self, message: str = "Copying…") -> None:
+        self._transfer_active = True
+        self._progress.configure(value=0)
+        self._pct_var.set("0%")
+        self._text_var.set(f"  {message}")
+        self._pct_label.pack(side=tk.RIGHT, padx=(2, 6))
+        self._progress.pack(side=tk.RIGHT, fill=tk.X, padx=(0, 6), pady=6)
+
+    def update_transfer_progress(self, percent: int) -> None:
+        if not self._transfer_active:
+            return
+        pct = max(0, min(100, int(percent)))
+        self._progress.configure(value=pct)
+        self._pct_var.set(f"{pct}%")
+
+    def stop_transfer(self) -> None:
+        if not self._transfer_active:
+            return
+        self._transfer_active = False
+        self._progress.pack_forget()
+        self._pct_label.pack_forget()
+        self._pct_var.set("")
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
     def _tick(self) -> None:
-        if not self._scanning:
+        if not self._scanning or self._transfer_active:
             return
         ch = _SPINNER[self._spin_idx % len(_SPINNER)]
         self._spin_idx += 1

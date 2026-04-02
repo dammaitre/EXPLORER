@@ -284,6 +284,9 @@ class App:
             close_cb=self.close,
             status_cb=self.status_bar.set_status,
             refresh_starred_cb=self.left_panel.refresh_starred,
+            transfer_start_cb=self.status_bar.start_transfer,
+            transfer_progress_cb=self.status_bar.update_transfer_progress,
+            transfer_stop_cb=self.status_bar.stop_transfer,
         )
         self.status_bar.set_status(_runtime_capabilities_message(self._dnd_enabled))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -344,6 +347,9 @@ class App:
             navigate_cb=self._navigate,
             on_select_cb=self._on_selection_change,
             status_cb=self.status_bar.set_status,
+            transfer_start_cb=self.status_bar.start_transfer,
+            transfer_progress_cb=self.status_bar.update_transfer_progress,
+            transfer_stop_cb=self.status_bar.stop_transfer,
             icons=self._icons,
         )
         self.paned.add(self.main_frame, minsize=400)

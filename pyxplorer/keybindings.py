@@ -56,7 +56,15 @@ def _do_cut(state) -> None:
 _paste_busy = False   # re-entrancy guard for async paste worker
 
 
-def _do_paste(state, root: tk.Tk, refresh_cb, status_cb) -> None:
+def _do_paste(
+    state,
+    root: tk.Tk,
+    refresh_cb,
+    status_cb,
+    transfer_start_cb=None,
+    transfer_progress_cb=None,
+    transfer_stop_cb=None,
+) -> None:
     global _paste_busy
     if _paste_busy:
         status_cb("Paste already running…")
@@ -79,21 +87,30 @@ def _do_paste(state, root: tk.Tk, refresh_cb, status_cb) -> None:
     _paste_busy = True
     verb = "Copying" if mode == "copy" else "Moving"
     status_cb(f"{verb} {len(paths)} item(s)…")
+    if transfer_start_cb is not None:
+        root.after(0, lambda: transfer_start_cb(f"{verb} {len(paths)} item(s)…"))
+
+    def _emit_progress(pct: int) -> None:
+        if transfer_progress_cb is None:
+            return
+        root.after(0, lambda p=pct: transfer_progress_cb(p))
 
     def _worker() -> None:
         nonlocal mode, paths, dst
         err: Exception | None = None
         try:
             if mode == "copy":
-                copy_items(paths, dst)
+                copy_items(paths, dst, progress_cb=_emit_progress)
             else:
-                move_items(paths, dst)
+                move_items(paths, dst, progress_cb=_emit_progress)
         except Exception as exc:
             err = exc
 
         def _finish() -> None:
             global _paste_busy
             _paste_busy = False
+            if transfer_stop_cb is not None:
+                transfer_stop_cb()
             if err is not None:
                 status_cb(f"Paste failed: {err}")
                 messagebox.showerror("Paste error", str(err), parent=root)
@@ -219,6 +236,9 @@ def bind_keys(
     close_cb=None,
     status_cb=None,
     refresh_starred_cb=None,
+    transfer_start_cb=None,
+    transfer_progress_cb=None,
+    transfer_stop_cb=None,
 ) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
@@ -235,7 +255,20 @@ def bind_keys(
     # ── File clipboard ─────────────────────────────────────────────────
     root.bind("<Control-c>", _guard(lambda: _do_copy(state)))
     root.bind("<Control-x>", _guard(lambda: _do_cut(state)))
-    root.bind("<Control-v>", _guard(lambda: _do_paste(state, root, _refresh, status_cb)))
+    root.bind(
+        "<Control-v>",
+        _guard(
+            lambda: _do_paste(
+                state,
+                root,
+                _refresh,
+                status_cb,
+                transfer_start_cb=transfer_start_cb,
+                transfer_progress_cb=transfer_progress_cb,
+                transfer_stop_cb=transfer_stop_cb,
+            )
+        ),
+    )
 
     # ── Path string to system clipboard (Ctrl+Shift+C) ─────────────────
     # In tkinter, capital letter in binding implies Shift is held

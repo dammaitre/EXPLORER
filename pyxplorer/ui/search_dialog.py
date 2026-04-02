@@ -210,7 +210,9 @@ class SearchDialog:
 
                 if kind == "search_result":
                     _, name, rel, ftype = msg
-                    self._tree.insert("", "end", values=(name, rel, ftype))
+                    # Extract only the parent folder path (not the file/folder itself)
+                    parent_rel = os.path.dirname(rel) if rel else ""
+                    self._tree.insert("", "end", values=(name, parent_rel, ftype))
                     n = len(self._tree.get_children())
                     self._status_var.set(f"{n} result(s) so far…")
 

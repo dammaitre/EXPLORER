@@ -45,12 +45,18 @@ class MainFrame(ttk.Frame):
     def __init__(self, parent, state, navigate_cb,
                  on_select_cb: Callable | None = None,
                  status_cb: Callable[[str], None] | None = None,
+                 transfer_start_cb: Callable[[str], None] | None = None,
+                 transfer_progress_cb: Callable[[int], None] | None = None,
+                 transfer_stop_cb: Callable[[], None] | None = None,
                  icons: dict | None = None):
         super().__init__(parent, style="TFrame")
         self.state = state
         self.navigate_cb = navigate_cb
         self.on_select_cb = on_select_cb
         self.status_cb = status_cb or (lambda message: None)
+        self.transfer_start_cb = transfer_start_cb
+        self.transfer_progress_cb = transfer_progress_cb
+        self.transfer_stop_cb = transfer_stop_cb
         self._icons = icons or {}
 
         self._current_path: str = ""
@@ -949,19 +955,28 @@ class MainFrame(ttk.Frame):
         self._drop_busy = True
         verb = "Copying" if mode == "copy" else "Moving"
         self.status_cb(f"{verb} {len(paths)} dropped item(s)…")
+        if self.transfer_start_cb is not None:
+            self.after(0, lambda: self.transfer_start_cb(f"{verb} {len(paths)} item(s)…"))
+
+        def _emit_progress(pct: int) -> None:
+            if self.transfer_progress_cb is None:
+                return
+            self.after(0, lambda p=pct: self.transfer_progress_cb(p))
 
         def _worker() -> None:
             err: Exception | None = None
             try:
                 if mode == "move":
-                    move_items(paths, dst)
+                    move_items(paths, dst, progress_cb=_emit_progress)
                 else:
-                    copy_items(paths, dst)
+                    copy_items(paths, dst, progress_cb=_emit_progress)
             except Exception as exc:
                 err = exc
 
             def _finish() -> None:
                 self._drop_busy = False
+                if self.transfer_stop_cb is not None:
+                    self.transfer_stop_cb()
                 if err is not None:
                     self.status_cb(f"Drop failed: {err}")
                     messagebox.showerror("Drop error", str(err), parent=self.winfo_toplevel())
