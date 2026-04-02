@@ -21,23 +21,54 @@ def _store_path() -> Path:
     return Path(local_app) / "Pyxplorer" / "starred.json"
 
 
-def _load() -> set[str]:
+def _restore_leaf_case(path: str) -> str:
+    """Best-effort restore of final path component casing from filesystem."""
+    norm = os.path.normpath(path)
+    parent, leaf = os.path.split(norm)
+    if not parent or not leaf:
+        return norm
+    try:
+        for candidate in os.listdir(parent):
+            if candidate.casefold() == leaf.casefold():
+                return os.path.join(parent, candidate)
+    except Exception:
+        pass
+    return norm
+
+
+def _load() -> dict[str, str]:
     p = _store_path()
     if not p.exists():
-        return set()
+        return {}
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
         if isinstance(data, list):
-            return {os.path.normcase(os.path.normpath(s)) for s in data if isinstance(s, str)}
+            result: dict[str, str] = {}
+            for value in data:
+                if not isinstance(value, str):
+                    continue
+                display = _restore_leaf_case(value)
+                result[_key(display)] = os.path.normpath(display)
+            return result
+        if isinstance(data, dict):
+            # Forward-compatible shape: {normalized_key: display_path}
+            result: dict[str, str] = {}
+            for value in data.values():
+                if not isinstance(value, str):
+                    continue
+                display = os.path.normpath(value)
+                result[_key(display)] = display
+            return result
     except Exception:
         pass
-    return set()
+    return {}
 
 
-def _save(starred: set[str]) -> None:
+def _save(starred: dict[str, str]) -> None:
     p = _store_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(sorted(starred), indent=2, ensure_ascii=False), encoding="utf-8")
+    values = sorted(starred.values(), key=lambda s: s.casefold())
+    p.write_text(json.dumps(values, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _key(path: str) -> str:
@@ -53,19 +84,19 @@ def toggle(path: str) -> bool:
     starred = _load()
     k = _key(path)
     if k in starred:
-        starred.discard(k)
+        starred.pop(k, None)
         result = False
     else:
-        starred.add(k)
+        starred[k] = os.path.normpath(path)
         result = True
     _save(starred)
     return result
 
 
 def all_starred() -> list[str]:
-    """Return all starred paths in stable sorted order (normalised)."""
-    return sorted(_load())
+    """Return all starred paths in stable sorted order, preserving display casing."""
+    return sorted(_load().values(), key=lambda s: s.casefold())
 
 
 def clear_all() -> None:
-    _save(set())
+    _save({})

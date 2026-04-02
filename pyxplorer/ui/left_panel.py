@@ -11,6 +11,7 @@ import sys
 import subprocess
 import string
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk
 from pathlib import Path
 from typing import Callable
@@ -32,6 +33,7 @@ _DENIED    = "#7A4040"
 
 _DUMMY = "\x00dummy"   # sentinel text that identifies placeholder children
 _SCROLL_SPEED = SCROLL_SPEED
+_STARRED_MIN_PATH_PIXELS = 80
 
 
 class LeftPanel(ttk.Frame):
@@ -109,12 +111,16 @@ class LeftPanel(ttk.Frame):
         self._starred_list.bind("<Button-1>",        self._on_starred_click)
         self._starred_list.bind("<Double-Button-1>", self._on_starred_click)
         self._starred_list.bind("<MouseWheel>",      self._on_starred_wheel)
+        self._starred_list.bind("<Configure>",       self._on_starred_resize)
+        self._starred_frame.bind("<Configure>",      self._on_starred_resize)
 
         self._starred_sep = ttk.Separator(self, orient="horizontal")
         self._starred_sep.pack(side=tk.TOP, fill=tk.X, pady=2)
 
         # Internal map: listbox index -> full path
         self._starred_paths: list[str] = []
+        self._starred_render_after: str | None = None
+        self._starred_font = tkfont.Font(font=self._starred_list.cget("font"))
 
         self._build_nav_tree()
 
@@ -316,22 +322,75 @@ class LeftPanel(ttk.Frame):
     # Public API — starred list
     # ------------------------------------------------------------------
 
+    def _truncate_left_to_width(self, text: str, max_width_px: int) -> str:
+        if max_width_px <= 0:
+            return "..."
+        if self._starred_font.measure(text) <= max_width_px:
+            return text
+        ell = "..."
+        ell_w = self._starred_font.measure(ell)
+        if ell_w >= max_width_px:
+            return ell
+
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            candidate = ell + text[-mid:]
+            if self._starred_font.measure(candidate) <= max_width_px:
+                lo = mid
+            else:
+                hi = mid - 1
+        return ell + text[-lo:] if lo > 0 else ell
+
+    def _format_starred_label(self, path: str) -> str:
+        display = to_display(path).rstrip("\\/")
+        if not display:
+            display = path
+        prefix = "  \u2605  "
+        listbox_width = self._starred_list.winfo_width()
+        if listbox_width <= 1:
+            listbox_width = max(self._starred_frame.winfo_width() - 8, 1)
+        path_width = max(
+            _STARRED_MIN_PATH_PIXELS,
+            listbox_width - self._starred_font.measure(prefix) - 12,
+        )
+        display = self._truncate_left_to_width(display, path_width)
+        return prefix + display
+
+    def _render_starred_labels(self) -> None:
+        self._starred_list.delete(0, tk.END)
+        for path in self._starred_paths:
+            self._starred_list.insert(tk.END, self._format_starred_label(path))
+
+    def _schedule_starred_render(self) -> None:
+        if self._starred_render_after is not None:
+            try:
+                self.after_cancel(self._starred_render_after)
+            except Exception:
+                pass
+        self._starred_render_after = self.after_idle(self._flush_starred_render)
+
+    def _flush_starred_render(self) -> None:
+        self._starred_render_after = None
+        self._render_starred_labels()
+
     def refresh_starred(self) -> None:
         """Rebuild the starred listbox from the persisted store."""
-        self._starred_list.delete(0, tk.END)
-        self._starred_paths = []
-        for path in _starred.all_starred():
-            name = Path(to_display(path)).name or path
-            self._starred_list.insert(tk.END, f"  \u2605  {name}")
-            self._starred_paths.append(path)
+        self._starred_paths = list(_starred.all_starred())
         # Show/hide the listbox and separator dynamically
         if self._starred_paths:
             self._starred_list.configure(height=min(len(self._starred_paths), 8))
             self._starred_list.pack(side=tk.TOP, fill=tk.X, padx=4)
             self._starred_sep.pack(side=tk.TOP, fill=tk.X, pady=2)
+            self._schedule_starred_render()
         else:
+            self._starred_list.delete(0, tk.END)
             self._starred_list.pack_forget()
             self._starred_sep.pack_forget()
+
+    def _on_starred_resize(self, event=None) -> None:
+        if self._starred_paths:
+            self._schedule_starred_render()
 
     def _on_starred_click(self, event: tk.Event) -> None:
         idx = self._starred_list.nearest(event.y)
