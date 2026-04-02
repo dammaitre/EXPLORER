@@ -31,6 +31,8 @@ class TopBar(ttk.Frame):
         self.navigate_cb = navigate_cb
         self._history_popup: tk.Toplevel | None = None
         self._history_listbox: tk.Listbox | None = None
+        self._editing_path: bool = False
+        self._committed_path: str = ""
         self._build()
 
     # ------------------------------------------------------------------
@@ -50,6 +52,7 @@ class TopBar(ttk.Frame):
             style="Path.TEntry",
         )
         self._entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=3)
+        self._entry.configure(state="readonly")
 
         self._hist_btn = ttk.Button(
             row1, text="▾", width=2, style="Flat.TButton",
@@ -58,7 +61,9 @@ class TopBar(ttk.Frame):
         self._hist_btn.pack(side=tk.LEFT, padx=(3, 0))
 
         self._entry.bind("<Return>", self._on_enter)
-        self._entry.bind("<Escape>", lambda e: self._hide_history())
+        self._entry.bind("<Escape>", self._on_escape)
+        self._entry.bind("<Button-1>", self._on_entry_single_click)
+        self._entry.bind("<Double-Button-1>", self._on_entry_double_click)
         self._entry.bind("<FocusIn>", self._on_focus_in)
         self._entry.bind("<FocusOut>", self._on_focus_out)
         self._entry.bind("<Alt-Down>", lambda e: self._show_history())
@@ -76,8 +81,12 @@ class TopBar(ttk.Frame):
     def update_path(self, path: str) -> None:
         """Called after every successful navigation."""
         display = to_display(path)
+        self._committed_path = display
+        self._editing_path = False
+        self._entry.configure(state="normal")
         self._path_var.set(display)
         self._entry.icursor(tk.END)
+        self._entry.configure(state="readonly")
         self._build_breadcrumbs(display)
 
     def open_run_dialog(self) -> None:
@@ -164,17 +173,50 @@ class TopBar(ttk.Frame):
     # Entry handlers
     # ------------------------------------------------------------------
 
+    def _on_entry_single_click(self, event=None) -> str | None:
+        if self._editing_path:
+            return None
+        current = self._committed_path or to_display(self.state.current_dir)
+        if current:
+            self.clipboard_clear()
+            self.clipboard_append(current)
+        return "break"
+
+    def _on_entry_double_click(self, event=None) -> str:
+        self._editing_path = True
+        self._entry.configure(state="normal")
+        self._entry.focus_set()
+        self._entry.selection_range(0, tk.END)
+        self._entry.icursor(tk.END)
+        if self.state.nav_history:
+            self._show_history()
+        return "break"
+
     def _on_enter(self, event=None) -> None:
+        if not self._editing_path:
+            return
         raw = self._path_var.get().strip()
         norm = normalize(raw)
         self._hide_history()
         if os.path.isdir(norm):
+            self._editing_path = False
+            self._entry.configure(state="readonly")
             self.navigate_cb(norm)
         else:
             self._flash_error()
 
+    def _on_escape(self, event=None) -> str:
+        self._hide_history()
+        if self._editing_path:
+            self._editing_path = False
+            self._entry.configure(state="normal")
+            self._path_var.set(self._committed_path or to_display(self.state.current_dir))
+            self._entry.icursor(tk.END)
+            self._entry.configure(state="readonly")
+        return "break"
+
     def _on_focus_in(self, event=None) -> None:
-        if self.state.nav_history:
+        if self._editing_path and self.state.nav_history:
             self._show_history()
 
     def _on_focus_out(self, event=None) -> None:
@@ -182,6 +224,8 @@ class TopBar(ttk.Frame):
         self.after(180, self._hide_if_not_popup_focused)
 
     def _on_keypress(self, event: tk.Event) -> None:
+        if not self._editing_path:
+            return
         # Hide history as soon as the user starts typing a new path
         if event.keysym not in ("Alt_L", "Alt_R", "Down", "Up",
                                  "Control_L", "Control_R", "Shift_L", "Shift_R"):

@@ -39,14 +39,16 @@ def _in_entry(root: tk.Tk) -> bool:
 
 def _do_copy(state) -> None:
     if state.selection:
-        payload = {"mode": "copy", "paths": list(state.selection)}
+        paths = [p for p in state.selection if isinstance(p, str) and p]
+        payload = {"mode": "copy", "paths": list(paths)}
         state.clipboard = payload
         save_shared_clipboard(payload["mode"], payload["paths"])
 
 
 def _do_cut(state) -> None:
     if state.selection:
-        payload = {"mode": "cut", "paths": list(state.selection)}
+        paths = [p for p in state.selection if isinstance(p, str) and p]
+        payload = {"mode": "cut", "paths": list(paths)}
         state.clipboard = payload
         save_shared_clipboard(payload["mode"], payload["paths"])
 
@@ -62,12 +64,12 @@ def _do_paste(state, root: tk.Tk, refresh_cb, status_cb) -> None:
 
     shared = load_shared_clipboard()
     mode = shared.get("mode")
-    paths = shared.get("paths", [])
+    paths = [p for p in shared.get("paths", []) if isinstance(p, str) and p]
     if mode and paths:
         state.clipboard = {"mode": mode, "paths": list(paths)}
     else:
         mode = state.clipboard.get("mode")
-        paths = state.clipboard.get("paths", [])
+        paths = [p for p in state.clipboard.get("paths", []) if isinstance(p, str) and p]
 
     if not mode or not paths:
         status_cb("Clipboard is empty")
@@ -315,7 +317,18 @@ def bind_keys(
 
     # ── Hide lower pane (Escape) ───────────────────────────────────────
     if hide_lower_cb is not None:
-        root.bind("<Escape>", lambda e: hide_lower_cb())
+        def _on_escape(e=None):
+            try:
+                focused = root.focus_get()
+            except Exception:
+                focused = None
+            if focused is main_frame._tree:
+                main_frame.collapse_selection_to_last()
+                return "break"
+            hide_lower_cb()
+            return "break"
+
+        root.bind("<Escape>", _on_escape)
 
     # ── Close window (Ctrl+W) ───────────────────────────────────────────────
     if close_cb is None:

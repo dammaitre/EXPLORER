@@ -47,6 +47,8 @@ class MainFrame(ttk.Frame):
         self._hidden_rows: list = []
         self._more_iid:   str | None = None
         self._pending_select: str | None = None   # path to pre-select after next render
+        self._selection_anchor: str | None = None
+        self._last_selected_iid: str | None = None
 
         self._build()
 
@@ -100,6 +102,7 @@ class MainFrame(ttk.Frame):
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # ── Bindings ──────────────────────────────────────────────────
+        self._tree.bind("<Button-1>",          self._on_button1_press)
         self._tree.bind("<ButtonRelease-1>",  self._on_click)
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
         self._tree.bind("<Left>",             self._go_up)
@@ -108,6 +111,9 @@ class MainFrame(ttk.Frame):
         self._tree.bind("<Return>",           self._on_return_key)   # dirs + files
         self._tree.bind("<Up>",               self._on_up)
         self._tree.bind("<Down>",             self._on_down)
+        self._tree.bind("<Shift-Up>",         self._on_shift_up)
+        self._tree.bind("<Shift-Down>",       self._on_shift_down)
+        self._tree.bind("<Escape>",           self._on_escape)
         self._tree.bind("<Control-Up>",       self._on_ctrl_up)
         self._tree.bind("<Control-Down>",     self._on_ctrl_down)
         self._tree.bind("<Button-2>",         self._on_middle_click)
@@ -370,6 +376,8 @@ class MainFrame(ttk.Frame):
             self._tree.selection_set(target_iid)
             self._tree.focus(target_iid)
             self._tree.see(target_iid)
+            self._selection_anchor = target_iid
+            self._last_selected_iid = target_iid
         self._tree.focus_set()   # always steal keyboard focus back to main frame
 
     def _load_more(self) -> None:
@@ -423,6 +431,26 @@ class MainFrame(ttk.Frame):
     # Event handlers
     # ------------------------------------------------------------------
 
+    def _on_button1_press(self, event: tk.Event) -> str | None:
+        item = self._tree.identify_row(event.y)
+        if not item or item == self._more_iid:
+            return None
+        is_shift = bool(event.state & 0x1)
+        if not is_shift:
+            return None
+
+        selected = set(self._tree.selection())
+        if item not in selected:
+            self._tree.selection_add(item)
+
+        self._tree.focus(item)
+        self._tree.see(item)
+        self._last_selected_iid = item
+        if self._selection_anchor is None or self._selection_anchor not in self._item_data:
+            self._selection_anchor = next(iter(self._tree.selection()), item)
+        self._on_select()
+        return "break"
+
     def _on_click(self, event: tk.Event) -> None:
         region = self._tree.identify_region(event.x, event.y)
         if region not in ("cell", "tree"):
@@ -443,10 +471,21 @@ class MainFrame(ttk.Frame):
 
     def _on_select(self, event=None) -> None:
         paths = []
-        for iid in self._tree.selection():
+        selection = list(self._tree.selection())
+        for iid in selection:
             row = self._item_data.get(iid)
             if row:
                 paths.append(row["path"])
+
+        if selection:
+            focus_iid = self._tree.focus()
+            if focus_iid in selection:
+                self._last_selected_iid = focus_iid
+            else:
+                self._last_selected_iid = selection[-1]
+            if len(selection) == 1:
+                self._selection_anchor = selection[0]
+
         self.state.selection = paths
         if self.on_select_cb:
             sel_size = self.get_selection_size()
@@ -478,6 +517,12 @@ class MainFrame(ttk.Frame):
             self._select_item(nxt if nxt in self._item_data else items[0])
         return "break"
 
+    def _on_shift_up(self, event=None) -> str:
+        return self._move_with_shift(-1)
+
+    def _on_shift_down(self, event=None) -> str:
+        return self._move_with_shift(+1)
+
     def _on_ctrl_up(self, event=None) -> str:
         items = list(self._item_data)
         if items:
@@ -490,10 +535,62 @@ class MainFrame(ttk.Frame):
             self._select_item(items[-1])
         return "break"
 
+    def _move_with_shift(self, step: int) -> str:
+        items = list(self._item_data)
+        if not items:
+            return "break"
+
+        current = self._tree.focus()
+        if current not in self._item_data:
+            sel = list(self._tree.selection())
+            current = sel[-1] if sel else items[0]
+
+        idx = items.index(current)
+        target = items[(idx + step) % len(items)]
+        self._extend_selection_to(target)
+        return "break"
+
+    def _extend_selection_to(self, target_iid: str) -> None:
+        items = list(self._item_data)
+        if not items or target_iid not in self._item_data:
+            return
+
+        if self._selection_anchor not in self._item_data:
+            sel = list(self._tree.selection())
+            self._selection_anchor = sel[0] if sel else target_iid
+
+        anchor_idx = items.index(self._selection_anchor)
+        target_idx = items.index(target_iid)
+        lo, hi = sorted((anchor_idx, target_idx))
+        self._tree.selection_set(items[lo:hi + 1])
+        self._tree.focus(target_iid)
+        self._tree.see(target_iid)
+        self._last_selected_iid = target_iid
+        self._on_select()
+
     def _select_item(self, iid: str) -> None:
         self._tree.selection_set(iid)
         self._tree.focus(iid)
         self._tree.see(iid)
+        self._selection_anchor = iid
+        self._last_selected_iid = iid
+
+    def collapse_selection_to_last(self) -> bool:
+        target = self._last_selected_iid
+        if target not in self._item_data:
+            selection = list(self._tree.selection())
+            target = selection[-1] if selection else None
+        if target not in self._item_data:
+            target = next(iter(self._item_data), None)
+        if not target:
+            return False
+        self._select_item(target)
+        self._on_select()
+        return True
+
+    def _on_escape(self, event=None) -> str:
+        self.collapse_selection_to_last()
+        return "break"
 
     def _go_up(self, event=None) -> str:
         if not self._current_path:
