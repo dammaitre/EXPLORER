@@ -1,6 +1,14 @@
 {
-  "scroll_speed": 1.0,
-  "scan_skip_dirs": [],
+  "scroll_speed": 1.5,
+  "scan_skip_dirs": [
+    "R:\\P013926_OTI_CDGX\\",
+    "R:\\",
+    "C:\\Windows\\",
+    "C:\\Program Files\\",
+    "C:\\Program Files (x86)\\",
+    "R:\\P013926_OTI_CDGX\\6_LIVRABLES OTI",
+    "R:\\P013926_OTI_CDGX\\4_ENTRANTS\\IN_2026\\30-03 Documentation"
+  ],
   "theme": {
     "bg":              "#202020",
     "bg_dark":         "#161616",

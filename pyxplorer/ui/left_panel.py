@@ -110,6 +110,7 @@ class LeftPanel(ttk.Frame):
         self._starred_list.pack(side=tk.TOP, fill=tk.X, padx=4)
         self._starred_list.bind("<Button-1>",        self._on_starred_click)
         self._starred_list.bind("<Double-Button-1>", self._on_starred_click)
+        self._starred_list.bind("<Button-2>",        self._on_starred_middle_click)
         self._starred_list.bind("<MouseWheel>",      self._on_starred_wheel)
         self._starred_list.bind("<Configure>",       self._on_starred_resize)
         self._starred_frame.bind("<Configure>",      self._on_starred_resize)
@@ -400,6 +401,22 @@ class LeftPanel(ttk.Frame):
                 self.navigate_cb(path)
             if self.focus_back_cb:
                 self.focus_back_cb()
+
+    def _on_starred_middle_click(self, event: tk.Event) -> str:
+        idx = self._starred_list.nearest(event.y)
+        if not (0 <= idx < len(self._starred_paths)):
+            return "break"
+
+        path = self._starred_paths[idx]
+        if not os.path.isdir(normalize(path)):
+            return "break"
+
+        target = to_display(path)
+        kwargs: dict = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        subprocess.Popen([sys.executable, "-m", "pyxplorer", target], **kwargs)
+        return "break"
 
     def _wheel_units(self, delta: int) -> int:
         units = int((-delta / 120) * _SCROLL_SPEED)
