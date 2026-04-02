@@ -1,4 +1,4 @@
-"""
+r"""
 Async recursive size scanner with cancellation support.
 
 Symlink / junction-point policy (Windows):
@@ -19,7 +19,7 @@ import os
 import queue
 import threading
 from .longpath import normalize, to_display
-from ..settings import EXT_SKIPPED
+from ..settings import EXT_SKIPPED, SCAN_SKIP_DIRS
 
 
 class CancelToken:
@@ -36,11 +36,28 @@ class CancelToken:
 
 def _is_network(path: str) -> bool:
     """
-    Return True only for raw UNC paths (\\server\share\...).
+    Return True only for raw UNC paths (\\\\server\\share\\...).
     Mapped drive letters are NOT flagged — they are user-configured and
     the scanner is expected to work on them.
     """
     return to_display(path).startswith("\\\\")
+
+
+def _norm_for_match(path: str) -> str:
+    return os.path.normcase(os.path.normpath(to_display(path)))
+
+
+_SCAN_SKIP_DIRS_NORM = [_norm_for_match(p) for p in SCAN_SKIP_DIRS]
+
+
+def _is_scan_skipped(path: str) -> bool:
+    candidate = _norm_for_match(path)
+    for root in _SCAN_SKIP_DIRS_NORM:
+        if candidate == root:
+            return True
+        if candidate.startswith(root + os.sep):
+            return True
+    return False
 
 
 class SizeScanner:
@@ -91,7 +108,7 @@ class SizeScanner:
         for path in items:
             if token.cancelled:
                 return
-            if _is_network(path):
+            if _is_network(path) or _is_scan_skipped(path):
                 # True UNC path — emit -1 so the row keeps showing "—"
                 self.q.put(("size_result", path, -1))
                 continue
@@ -102,7 +119,7 @@ class SizeScanner:
             self.q.put(("scan_complete", parent_path))
 
     def _single_worker(self, path: str, token: CancelToken) -> None:
-        if _is_network(path):
+        if _is_network(path) or _is_scan_skipped(path):
             return
         size = self._dir_size(path, token)
         if not token.cancelled:
@@ -113,6 +130,8 @@ class SizeScanner:
     # ------------------------------------------------------------------
 
     def _dir_size(self, path: str, token: CancelToken) -> int:
+        if _is_scan_skipped(path):
+            return 0
         total = 0
         try:
             for entry in os.scandir(normalize(path)):
@@ -120,6 +139,8 @@ class SizeScanner:
                     return 0
                 try:
                     if entry.is_dir(follow_symlinks=False):
+                        if _is_scan_skipped(entry.path):
+                            continue
                         # Regular directories AND NTFS junction points.
                         # follow_symlinks=False means NTFS symlinks-to-dirs evaluate
                         # to False here, so they are NOT recursed (cycle prevention).

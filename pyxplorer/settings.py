@@ -11,6 +11,7 @@ _SETTINGS_FILE = Path(__file__).parent / "settings.json"
 _DEFAULTS: dict = {
     "ext_skipped": [],
     "scroll_speed": 1.0,
+    "scan_skip_dirs": [],
     "theme": {
         "bg":              "#202020",
         "bg_dark":         "#161616",
@@ -56,6 +57,27 @@ def _load() -> dict:
         for p in raw.get("start_dirs", _DEFAULTS["start_dirs"])
         if isinstance(p, str)
     ]
+
+    scan_skip_dirs: list[str] = []
+    for value in raw.get("scan_skip_dirs", _DEFAULTS["scan_skip_dirs"]):
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        expanded = os.path.expanduser(cleaned)
+        scan_skip_dirs.append(os.path.normpath(expanded))
+
+    # Deduplicate while preserving order (case-insensitive on Windows)
+    seen_skip_dirs: set[str] = set()
+    unique_skip_dirs: list[str] = []
+    for item in scan_skip_dirs:
+        key = os.path.normcase(item)
+        if key in seen_skip_dirs:
+            continue
+        seen_skip_dirs.add(key)
+        unique_skip_dirs.append(item)
+
     # Normalise extensions: lowercase, ensure leading dot, deduplicate
     ext_skipped: set[str] = set()
     for e in raw.get("ext_skipped", _DEFAULTS["ext_skipped"]):
@@ -65,6 +87,7 @@ def _load() -> dict:
     return {
         "theme": theme,
         "start_dirs": start_dirs,
+        "scan_skip_dirs": unique_skip_dirs,
         "ext_skipped": ext_skipped,
         "scroll_speed": scroll_speed,
     }
@@ -74,5 +97,6 @@ _cfg = _load()
 
 THEME: dict       = _cfg["theme"]
 START_DIRS: list  = _cfg["start_dirs"]
+SCAN_SKIP_DIRS: list = _cfg["scan_skip_dirs"]
 EXT_SKIPPED: set  = _cfg["ext_skipped"]   # lowercase extensions with leading dot
 SCROLL_SPEED: float = _cfg["scroll_speed"]

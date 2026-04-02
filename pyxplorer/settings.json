@@ -1,5 +1,6 @@
 {
   "scroll_speed": 1.0,
+  "scan_skip_dirs": [],
   "theme": {
     "bg":              "#202020",
     "bg_dark":         "#161616",
