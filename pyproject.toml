@@ -10,6 +10,7 @@ dependencies = [
 	"Pillow",
 	"PyMuPDF",
 	"ptyprocess",
+	"tkinterdnd2",
 	"pywinpty; sys_platform == 'win32'",
 ]
 

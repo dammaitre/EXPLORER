@@ -44,6 +44,17 @@ _LOWER_MIN_H = 150
 _LOWER_DEFAULT_H = 260
 
 
+def _create_root() -> tuple[tk.Tk, bool]:
+    try:
+        module = __import__("tkinterdnd2", fromlist=["TkinterDnD"])
+        tkdnd = getattr(module, "TkinterDnD", None)
+        if tkdnd is None:
+            return tk.Tk(), False
+        return tkdnd.Tk(), True
+    except Exception:
+        return tk.Tk(), False
+
+
 def _copy_engine_name() -> str:
     return "robocopy" if sys.platform == "win32" else "shutil"
 
@@ -65,12 +76,13 @@ def _terminal_shell_name() -> str:
     return "bash"
 
 
-def _runtime_capabilities_message() -> str:
+def _runtime_capabilities_message(dnd_enabled: bool) -> str:
     return (
         "Runtime: "
         f"copy={_copy_engine_name()} · "
         f"pty={_terminal_backend_name()} · "
-        f"shell={_terminal_shell_name()}"
+        f"shell={_terminal_shell_name()} · "
+        f"dnd={'on' if dnd_enabled else 'off'}"
     )
 
 
@@ -219,7 +231,7 @@ def _apply_win11_style(root: tk.Tk) -> None:
 
 class App:
     def __init__(self, start_path: str | None = None):
-        self.root = tk.Tk()
+        self.root, self._dnd_enabled = _create_root()
         # Resolve start_path early; store None if invalid so layout can ignore it
         if start_path:
             _norm = normalize(start_path)
@@ -273,7 +285,7 @@ class App:
             status_cb=self.status_bar.set_status,
             refresh_starred_cb=self.left_panel.refresh_starred,
         )
-        self.status_bar.set_status(_runtime_capabilities_message())
+        self.status_bar.set_status(_runtime_capabilities_message(self._dnd_enabled))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     def _set_title(self, path: str) -> None:
@@ -331,6 +343,7 @@ class App:
             self.paned, self.state,
             navigate_cb=self._navigate,
             on_select_cb=self._on_selection_change,
+            status_cb=self.status_bar.set_status,
             icons=self._icons,
         )
         self.paned.add(self.main_frame, minsize=400)

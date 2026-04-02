@@ -26,6 +26,7 @@ The app is currently organized as a desktop GUI package with a main application 
 	- `T`: embedded terminal (`PowerShell` on Windows, `$SHELL`/`bash` fallback on Linux/macOS)
 	- `N`: temp UTF-8 notepad backed by a per-user data file (`Pyxplorer/temp.txt`)
 - **Shared file clipboard across instances:** `Ctrl+C/X/V` uses a per-user data file (`Pyxplorer/clipboard.json`) for cross-window copy/cut/paste.
+- **Cross-instance drag & drop (Phase 2):** dropping files/folders onto the main list is supported, and dragging selected items from one `pyxplorer` window to another is enabled when `tkinterdnd2` is available.
 - **Async paste:** copy/move operations are non-blocking and report progress in the status bar (`robocopy` on Windows, `shutil` fallback elsewhere).
 - **Heuristics window (`Ctrl+H`):** runs scripts from the per-user scripts directory (`Pyxplorer/scripts`) over current directory children and displays results in a dynamic column.
 - **New-window workflows:** middle-click directories in left/main panels to open new windows, plus `Ctrl+N` for opening current directory in another window.
@@ -156,12 +157,21 @@ python -m pyxplorer
 - `Right` or `Enter`: open the selected directory.
 - `Middle click` on directory (left/main panel): open it in a new window.
 
+Drag & drop (when backend is available):
+
+- Drag selected rows from one `pyxplorer` instance and drop into another.
+- Drop onto a directory row to target that directory.
+- Drop onto empty space/file rows to target the current directory.
+- Default action follows platform conventions (same drive/device: move; otherwise: copy).
+- Operations run asynchronously and refresh the current view when complete.
+
 ## Notes and limitations
 
 - The directory scanner computes folder sizes asynchronously, so directory sizes briefly show `—` until scan results arrive.
 - File deletion is permanent; there is currently no recycle-bin integration.
 - The project is now cross-platform aware (Windows/Linux/macOS), but Windows remains the most tuned environment.
 - The package name, console script, and project metadata now consistently use `pyxplorer`.
+- Drag & drop requires a working Tk DnD backend (`tkinterdnd2`/`tkdnd`). If unavailable, cross-instance clipboard (`Ctrl+C/X/V`) remains supported.
 
 ## Per-user data directory
 

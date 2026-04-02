@@ -5,22 +5,35 @@ Phase 5 — update_item_size / finalize_pct wired to async scanner.
 import os
 import sys
 import subprocess
+import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from pathlib import Path
 from typing import Callable
+from urllib.parse import unquote, urlparse
 
 from ..core.longpath import normalize, to_display
-from ..core.fs import fmt_size
+from ..core.fs import fmt_size, copy_items, move_items
 from ..core import starred as _starred
 from ..settings import THEME as _T, EXT_SKIPPED, SCROLL_SPEED
 from .scroll_utils import make_autohide_pack_setter
+
+try:
+    _tkdnd2 = __import__("tkinterdnd2", fromlist=["DND_FILES"])
+    DND_FILES = getattr(_tkdnd2, "DND_FILES", None)
+    COPY = getattr(_tkdnd2, "COPY", "copy")
+    MOVE = getattr(_tkdnd2, "MOVE", "move")
+except Exception:
+    DND_FILES = None
+    COPY = "copy"
+    MOVE = "move"
 
 _BG       = _T["bg"]
 _TEXT     = _T["text"]
 _TEXT_DIM = _T["text_mute"]
 _TEXT_DIR = _T["text"]
 _ACCENT   = _T["accent"]
+_ROW_H    = _T["row_hover"]
 _ROW_SEL  = _T["row_selected"]
 _DENIED   = "#7A4040"
 
@@ -31,11 +44,13 @@ _SCROLL_SPEED = SCROLL_SPEED
 class MainFrame(ttk.Frame):
     def __init__(self, parent, state, navigate_cb,
                  on_select_cb: Callable | None = None,
+                 status_cb: Callable[[str], None] | None = None,
                  icons: dict | None = None):
         super().__init__(parent, style="TFrame")
         self.state = state
         self.navigate_cb = navigate_cb
         self.on_select_cb = on_select_cb
+        self.status_cb = status_cb or (lambda message: None)
         self._icons = icons or {}
 
         self._current_path: str = ""
@@ -49,6 +64,11 @@ class MainFrame(ttk.Frame):
         self._pending_select: str | None = None   # path to pre-select after next render
         self._selection_anchor: str | None = None
         self._last_selected_iid: str | None = None
+        self._drop_busy: bool = False
+        self._dnd_enabled: bool = False
+        self._drop_hover_iid: str | None = None
+        self._alt_drag_intent: bool = False
+        self._suppress_release_click: bool = False
 
         self._build()
 
@@ -94,6 +114,7 @@ class MainFrame(ttk.Frame):
         self._tree.tag_configure("more",    foreground=_ACCENT)
         self._tree.tag_configure("symlink", foreground="#A0C4E8")
         self._tree.tag_configure("starred",  foreground=_ACCENT)
+        self._tree.tag_configure("drop_target", background=_ROW_H)
 
         # ── Scrollbar ─────────────────────────────────────────────────
         vsb = ttk.Scrollbar(self, orient="vertical", command=self._tree.yview)
@@ -118,6 +139,7 @@ class MainFrame(ttk.Frame):
         self._tree.bind("<Control-Down>",     self._on_ctrl_down)
         self._tree.bind("<Button-2>",         self._on_middle_click)
         self._tree.bind("<MouseWheel>",       self._on_mousewheel)
+        self._register_drop_target()
 
     # ------------------------------------------------------------------
     # Public API — navigation
@@ -259,10 +281,18 @@ class MainFrame(ttk.Frame):
     def get_current_rows(self) -> list[dict]:
         return [dict(r) for r in self._all_rows]
 
+    @staticmethod
+    def _starred_key(path: str) -> str:
+        return os.path.normcase(normalize(path))
+
+    def _starred_keys_snapshot(self) -> set[str]:
+        return {self._starred_key(p) for p in _starred.all_starred()}
+
     def refresh_stars(self) -> None:
         """Refresh the ★ column for all visible rows without reloading the directory."""
+        starred_keys = self._starred_keys_snapshot()
         for iid, row in self._item_data.items():
-            is_star = _starred.is_starred(row["path"])
+            is_star = self._starred_key(row["path"]) in starred_keys
             star_val = "★" if is_star else ""
             self._tree.set(iid, "star", star_val)
             current_tags = list(self._tree.item(iid, "tags"))
@@ -284,9 +314,10 @@ class MainFrame(ttk.Frame):
 
     def get_starred_iids_in_order(self) -> list[str]:
         """Return tree iids of starred rows in their display order."""
+        starred_keys = self._starred_keys_snapshot()
         return [
             iid for iid in self._item_data
-            if _starred.is_starred(self._item_data[iid]["path"])
+            if self._starred_key(self._item_data[iid]["path"]) in starred_keys
         ]
 
     def begin_heuristic_results(self, title: str) -> None:
@@ -335,6 +366,7 @@ class MainFrame(ttk.Frame):
         self._item_data.clear()
         self._path_iids.clear()
         self._more_iid = None
+        starred_keys = self._starred_keys_snapshot()
 
         sorted_rows = self._sorted_rows()
         visible = sorted_rows[:_MAX_ROWS]
@@ -342,7 +374,7 @@ class MainFrame(ttk.Frame):
 
         for row in visible:
             img = self._icons.get("folder" if row["is_dir"] else "file")
-            is_star = _starred.is_starred(row["path"])
+            is_star = self._starred_key(row["path"]) in starred_keys
             star_val = "★" if is_star else ""
             tags = (row["tag"], "starred") if is_star else (row["tag"],)
             iid = self._tree.insert(
@@ -384,9 +416,10 @@ class MainFrame(ttk.Frame):
         if self._more_iid:
             self._tree.delete(self._more_iid)
             self._more_iid = None
+        starred_keys = self._starred_keys_snapshot()
         for row in self._hidden_rows:
             img = self._icons.get("folder" if row["is_dir"] else "file")
-            is_star = _starred.is_starred(row["path"])
+            is_star = self._starred_key(row["path"]) in starred_keys
             star_val = "★" if is_star else ""
             tags = (row["tag"], "starred") if is_star else (row["tag"],)
             iid = self._tree.insert(
@@ -432,9 +465,18 @@ class MainFrame(ttk.Frame):
     # ------------------------------------------------------------------
 
     def _on_button1_press(self, event: tk.Event) -> str | None:
+        self._suppress_release_click = False
         item = self._tree.identify_row(event.y)
         if not item or item == self._more_iid:
+            self._alt_drag_intent = False
             return None
+
+        self._alt_drag_intent = self._is_alt_pressed(event) and self._dnd_enabled
+        if self._alt_drag_intent:
+            if len(self._tree.selection()) > 1:
+                self._suppress_release_click = True
+                return "break"
+
         is_shift = bool(event.state & 0x1)
         if not is_shift:
             return None
@@ -452,6 +494,11 @@ class MainFrame(ttk.Frame):
         return "break"
 
     def _on_click(self, event: tk.Event) -> None:
+        if self._suppress_release_click:
+            self._suppress_release_click = False
+            self._alt_drag_intent = False
+            return
+
         region = self._tree.identify_region(event.x, event.y)
         if region not in ("cell", "tree"):
             return
@@ -468,6 +515,7 @@ class MainFrame(ttk.Frame):
             self.navigate_cb(row["path"])
         elif row and not row["is_dir"]:
             self._open_file(row["path"])
+        self._alt_drag_intent = False
 
     def _on_select(self, event=None) -> None:
         paths = []
@@ -660,3 +708,267 @@ class MainFrame(ttk.Frame):
             units = -1 if event.delta > 0 else 1
         self._tree.yview_scroll(units, "units")
         return "break"
+
+    def _register_drop_target(self) -> None:
+        if not DND_FILES:
+            self._dnd_enabled = False
+            return
+        try:
+            self._tree.drop_target_register(DND_FILES)
+            self._tree.drag_source_register(1, DND_FILES)
+            self._tree.dnd_bind("<<DragInitCmd>>", self._on_drag_init)
+            self._tree.dnd_bind("<<DragEndCmd>>", self._on_drag_end)
+            self._tree.dnd_bind("<<DropEnter>>", self._on_drop_enter)
+            self._tree.dnd_bind("<<DropPosition>>", self._on_drop_position)
+            self._tree.dnd_bind("<<DropLeave>>", self._on_drop_leave)
+            self._tree.dnd_bind("<<Drop>>", self._on_drop)
+            self._dnd_enabled = True
+        except Exception:
+            self._dnd_enabled = False
+
+    def _on_drag_init(self, event):
+        if not (self._alt_drag_intent or self._is_alt_pressed(event)):
+            return (COPY, DND_FILES, "")
+
+        self._suppress_release_click = True
+
+        y = self._event_tree_y(event)
+        item = self._tree.identify_row(y)
+        if item and item in self._item_data and item not in self._tree.selection():
+            self._select_item(item)
+            self._on_select()
+
+        paths = self._drag_payload_paths()
+        if not paths:
+            return (COPY, DND_FILES, "")
+        data = tuple(paths)
+        return ((COPY, MOVE), DND_FILES, data)
+
+    @staticmethod
+    def _is_alt_pressed(event) -> bool:
+        try:
+            state = int(getattr(event, "state", 0) or 0)
+            if state & 0x0008:
+                return True
+        except Exception:
+            pass
+
+        modifiers = str(getattr(event, "modifiers", "") or "").lower()
+        return "alt" in modifiers or "mod1" in modifiers
+
+    def _on_drag_end(self, event):
+        self._alt_drag_intent = False
+        self._set_drop_hover(None)
+
+    def _on_drop_enter(self, event):
+        self._set_drop_hover(self._hover_drop_target_iid(event))
+        return getattr(event, "action", COPY)
+
+    def _on_drop_position(self, event):
+        self._set_drop_hover(self._hover_drop_target_iid(event))
+        return getattr(event, "action", COPY)
+
+    def _on_drop_leave(self, event):
+        self._set_drop_hover(None)
+        return getattr(event, "action", COPY)
+
+    def _on_drop(self, event) -> str:
+        self._set_drop_hover(None)
+        if self._drop_busy:
+            self.status_cb("Drop already running…")
+            return "break"
+
+        paths = self._parse_drop_paths(getattr(event, "data", ""))
+        if not paths:
+            self.status_cb("Drop ignored: no valid local path")
+            return "break"
+
+        dst = self._drop_destination_from_event(event)
+        if not dst or not os.path.isdir(normalize(dst)):
+            self.status_cb("Drop ignored: invalid destination")
+            return "break"
+
+        forbidden = [p for p in paths if self._is_forbidden_drop(p, dst)]
+        if forbidden:
+            self.status_cb("Drop blocked: cannot drop into itself")
+            return "break"
+
+        mode = self._drop_mode(getattr(event, "action", ""), paths, dst)
+        self._run_drop(mode, paths, dst)
+        return "break"
+
+    def _event_tree_y(self, event) -> int:
+        y = getattr(event, "y", None)
+        if isinstance(y, int):
+            return y
+        y_root = getattr(event, "y_root", None)
+        if isinstance(y_root, int):
+            return y_root - self._tree.winfo_rooty()
+        return 0
+
+    def _hover_drop_target_iid(self, event) -> str | None:
+        y = self._event_tree_y(event)
+        item = self._tree.identify_row(y)
+        if not item or item == self._more_iid:
+            return None
+        row = self._item_data.get(item)
+        if not row or not row["is_dir"]:
+            return None
+        return item
+
+    def _set_drop_hover(self, iid: str | None) -> None:
+        if iid == self._drop_hover_iid:
+            return
+        if self._drop_hover_iid and self._drop_hover_iid in self._item_data:
+            tags = [t for t in self._tree.item(self._drop_hover_iid, "tags") if t != "drop_target"]
+            self._tree.item(self._drop_hover_iid, tags=tuple(tags))
+        self._drop_hover_iid = None
+        if iid and iid in self._item_data:
+            tags = list(self._tree.item(iid, "tags"))
+            if "drop_target" not in tags:
+                tags.append("drop_target")
+                self._tree.item(iid, tags=tuple(tags))
+            self._drop_hover_iid = iid
+
+    def _drag_payload_paths(self) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for iid in self._tree.selection():
+            row = self._item_data.get(iid)
+            if not row:
+                continue
+            path = row.get("path")
+            if not path:
+                continue
+            norm = os.path.normcase(normalize(path))
+            if norm in seen:
+                continue
+            if not os.path.exists(normalize(path)):
+                continue
+            seen.add(norm)
+            out.append(to_display(path))
+        return out
+
+    def _drop_destination_from_event(self, event) -> str:
+        item = self._tree.identify_row(getattr(event, "y", 0))
+        if item and item != self._more_iid:
+            row = self._item_data.get(item)
+            if row and row["is_dir"]:
+                return row["path"]
+        return self.state.current_dir
+
+    def _parse_drop_paths(self, raw: str) -> list[str]:
+        if not raw:
+            return []
+        try:
+            parts = list(self._tree.tk.splitlist(raw))
+        except Exception:
+            parts = [raw]
+
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in parts:
+            path = self._coerce_drop_item_to_path(item)
+            if not path:
+                continue
+            norm = normalize(path)
+            key = os.path.normcase(norm)
+            if key in seen:
+                continue
+            if not os.path.exists(norm):
+                continue
+            seen.add(key)
+            out.append(path)
+        return out
+
+    @staticmethod
+    def _coerce_drop_item_to_path(item: str) -> str | None:
+        if not item:
+            return None
+        text = item.strip()
+        if not text:
+            return None
+        if text.startswith("file://"):
+            parsed = urlparse(text)
+            if parsed.scheme != "file":
+                return None
+            if sys.platform == "win32":
+                path = unquote(parsed.path or "")
+                if path.startswith("/") and len(path) > 2 and path[2] == ":":
+                    path = path[1:]
+                path = path.replace("/", "\\")
+                if parsed.netloc and parsed.netloc.lower() != "localhost":
+                    path = f"\\\\{parsed.netloc}{path}"
+                return path
+            return unquote(parsed.path or "")
+        return text
+
+    @staticmethod
+    def _drop_mode(action: str, src_paths: list[str], dst_dir: str) -> str:
+        a = (action or "").lower()
+        if a == "move":
+            return "move"
+        if a == "copy":
+            return "copy"
+
+        dst_norm = normalize(dst_dir)
+        if sys.platform == "win32":
+            dst_drive = os.path.splitdrive(to_display(dst_norm))[0].lower()
+            same_drive = True
+            for src in src_paths:
+                src_drive = os.path.splitdrive(to_display(src))[0].lower()
+                if src_drive != dst_drive:
+                    same_drive = False
+                    break
+            return "move" if same_drive else "copy"
+
+        try:
+            dst_dev = os.stat(dst_norm).st_dev
+            same_dev = all(os.stat(normalize(src)).st_dev == dst_dev for src in src_paths)
+            return "move" if same_dev else "copy"
+        except OSError:
+            return "copy"
+
+    @staticmethod
+    def _is_forbidden_drop(src_path: str, dst_dir: str) -> bool:
+        src_norm = normalize(src_path)
+        dst_norm = normalize(dst_dir)
+        if os.path.normcase(src_norm) == os.path.normcase(dst_norm):
+            return True
+        if not os.path.isdir(src_norm):
+            return False
+        try:
+            src_real = os.path.normcase(os.path.abspath(src_norm))
+            dst_real = os.path.normcase(os.path.abspath(dst_norm))
+            common = os.path.commonpath([src_real, dst_real])
+            return common == src_real
+        except Exception:
+            return False
+
+    def _run_drop(self, mode: str, paths: list[str], dst: str) -> None:
+        self._drop_busy = True
+        verb = "Copying" if mode == "copy" else "Moving"
+        self.status_cb(f"{verb} {len(paths)} dropped item(s)…")
+
+        def _worker() -> None:
+            err: Exception | None = None
+            try:
+                if mode == "move":
+                    move_items(paths, dst)
+                else:
+                    copy_items(paths, dst)
+            except Exception as exc:
+                err = exc
+
+            def _finish() -> None:
+                self._drop_busy = False
+                if err is not None:
+                    self.status_cb(f"Drop failed: {err}")
+                    messagebox.showerror("Drop error", str(err), parent=self.winfo_toplevel())
+                    return
+                self.status_cb(f"Drop complete — {len(paths)} item(s)")
+                self.navigate_cb(self.state.current_dir)
+
+            self.after(0, _finish)
+
+        threading.Thread(target=_worker, daemon=True).start()
