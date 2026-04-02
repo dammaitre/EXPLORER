@@ -2,7 +2,7 @@
 
 Win11's file explorer copy but damien-friendly
 
-`EXPLORER` is a Windows-focused file explorer prototype built with `tkinter` and `ttk`. It keeps familiar Explorer flows while adding keyboard-first navigation, background folder-size scanning, and a VS Code-style lower panel for PDF, terminal, and temp notes workflows.
+`EXPLORER` is a desktop file explorer prototype built with `tkinter` and `ttk`. It keeps familiar Explorer flows while adding keyboard-first navigation, background folder-size scanning, and a VS Code-style lower panel for PDF, terminal, and temp notes workflows.
 
 ## Current state
 
@@ -23,13 +23,13 @@ The app is currently organized as a desktop GUI package with a main application 
 - **Status bar feedback:** spinner during scans plus operation messages (scan, paste, heuristics, lower-panel actions).
 - **Lower panel (`P/T/N`):** resizable bottom panel with:
 	- `P`: lightweight PDF viewer (async page load, zoom, text copy)
-	- `T`: embedded PowerShell terminal
-	- `N`: temp UTF-8 notepad backed by `%LOCALAPPDATA%\Pyxplorer\temp.txt`
-- **Shared file clipboard across instances:** `Ctrl+C/X/V` uses `%LOCALAPPDATA%\Pyxplorer\clipboard.json` for cross-window copy/cut/paste.
-- **Async robocopy paste:** copy/move operations are non-blocking and report progress in the status bar.
-- **Heuristics window (`Ctrl+H`):** runs scripts from `%LOCALAPPDATA%\Pyxplorer\scripts` over current directory children and displays results in a dynamic column.
+	- `T`: embedded terminal (`PowerShell` on Windows, `$SHELL`/`bash` fallback on Linux/macOS)
+	- `N`: temp UTF-8 notepad backed by a per-user data file (`Pyxplorer/temp.txt`)
+- **Shared file clipboard across instances:** `Ctrl+C/X/V` uses a per-user data file (`Pyxplorer/clipboard.json`) for cross-window copy/cut/paste.
+- **Async paste:** copy/move operations are non-blocking and report progress in the status bar (`robocopy` on Windows, `shutil` fallback elsewhere).
+- **Heuristics window (`Ctrl+H`):** runs scripts from the per-user scripts directory (`Pyxplorer/scripts`) over current directory children and displays results in a dynamic column.
 - **New-window workflows:** middle-click directories in left/main panels to open new windows, plus `Ctrl+N` for opening current directory in another window.
-- **Windows long-path support:** internal path normalization plus an attempt to enable the Windows long-path registry flag.
+- **Windows long-path support:** internal path normalization plus an attempt to enable the Windows long-path registry flag (Windows only).
 - **Theme configuration:** colors, fonts, row heights, and optional start directories are loaded from `pyxplorer/settings.json`.
 
 ## Project layout
@@ -96,7 +96,7 @@ Load user-adjustable theme and startup directory settings.
 - `longpath.py`: Windows long-path normalization and registry toggle helper.
 - `scanner.py`: cancellable background directory-size scanning.
 - `search.py`: regex name search backend stub for future UI integration.
-- `shared_clipboard.py`: cross-instance clipboard persistence in `%LOCALAPPDATA%\Pyxplorer\clipboard.json`.
+- `shared_clipboard.py`: cross-instance clipboard persistence in a per-user data directory.
 
 ### `pyxplorer/ui/`
 
@@ -105,8 +105,8 @@ Load user-adjustable theme and startup directory settings.
 - `main_frame.py`: main directory listing, sorting, selection tracking, incremental loading, and dynamic heuristic column.
 - `lower_panel.py`: bottom panel coordinator (`P/T/N`).
 - `pdf_viewer.py`: async PDF rendering with zoom and text selection/copy.
-- `embedded_terminal.py`: embedded PowerShell terminal view.
-- `temp_notepad.py`: temporary text editor tied to `%LOCALAPPDATA%\Pyxplorer\temp.txt`.
+- `embedded_terminal.py`: embedded terminal view (PowerShell/PTY backend on Windows, ptyprocess shell fallback on Linux/macOS).
+- `temp_notepad.py`: temporary text editor tied to a per-user data file.
 - `heuristics_window.py`: script selector window for `Ctrl+H` workflow.
 - `status_bar.py`: scan progress and selection summary.
 
@@ -160,8 +160,16 @@ python -m pyxplorer
 
 - The directory scanner computes folder sizes asynchronously, so directory sizes briefly show `—` until scan results arrive.
 - File deletion is permanent; there is currently no recycle-bin integration.
-- The project is Windows-oriented, though parts of the code include basic cross-platform fallbacks.
+- The project is now cross-platform aware (Windows/Linux/macOS), but Windows remains the most tuned environment.
 - The package name, console script, and project metadata now consistently use `pyxplorer`.
+
+## Per-user data directory
+
+Pyxplorer stores clipboard, heuristics scripts, starred entries, and temp notes under:
+
+- **Windows:** `%LOCALAPPDATA%\Pyxplorer`
+- **Linux:** `${XDG_DATA_HOME:-~/.local/share}/Pyxplorer`
+- **macOS:** `~/Library/Application Support/Pyxplorer`
 
 ## Configuration
 

@@ -3,6 +3,8 @@
 Win11-style file explorer for the building industry.  
 Stack: Python 3.12 + tkinter/ttk, dark theme, Pillow icons, no external UI deps.
 
+Cross-platform note: Windows is the most tuned target, but Linux/macOS fallbacks are implemented for storage paths, terminal backend, and file opening.
+
 ---
 
 ## How to run
@@ -37,18 +39,18 @@ pyxplorer/
 ├── core/
 │   ├── heuristics.py    # Heuristic script discovery + execution (python script.py PATH)
 │   ├── longpath.py      # normalize() / to_display() — every OS call goes through here
-│   ├── fs.py            # copy_items / move_items (robocopy on Win) / delete / mkdir
+│   ├── fs.py            # copy_items / move_items (robocopy on Win, shutil fallback) / delete / mkdir
 │   ├── scanner.py       # Async recursive size scanner with CancelToken
 │   ├── search.py        # Regex name search used by Ctrl+F dialog
-│   └── shared_clipboard.py # Cross-instance clipboard file in %LOCALAPPDATA%\Pyxplorer
+│   └── shared_clipboard.py # Cross-instance clipboard file in per-user app data dir
 └── ui/
     ├── top_bar.py       # Path entry, 10-item history dropdown, breadcrumbs, Ctrl+R
     ├── left_panel.py    # Lazy-loading directory tree (Nav.Treeview style)
   ├── main_frame.py    # Directory listing: Name / [Heuristic] / Size / % columns
   ├── lower_panel.py   # VSCode-style lower pane coordinator (P/T/N)
   ├── pdf_viewer.py    # PDF viewer tab (async page render, zoom, text selection)
-  ├── embedded_terminal.py # Embedded PowerShell terminal tab
-  ├── temp_notepad.py  # Temp notes tab (%LOCALAPPDATA%\Pyxplorer\temp.txt)
+  ├── embedded_terminal.py # Embedded terminal tab (PowerShell on Win, shell fallback elsewhere)
+  ├── temp_notepad.py  # Temp notes tab (per-user app data dir)
   ├── heuristics_window.py # Ctrl+H script picker window
     ├── status_bar.py    # Braille spinner, item count, selection size
     ├── search_dialog.py # Ctrl+F — debounced regex search with streaming results
@@ -88,6 +90,13 @@ Do not duplicate values across files.
 ### 4. Copy / move always uses robocopy on Windows
 
 `fs.copy_items()` and `fs.move_items()` delegate to `robocopy` for reliability on network drives and long paths. `shutil` is the non-Windows fallback only. Exit codes 0–7 = success, 8+ = error.
+
+### 4b. Per-user app data location is platform-dependent
+
+Pyxplorer persistence files (clipboard, heuristics scripts, starred entries, temp notes) are under:
+- Windows: `%LOCALAPPDATA%\Pyxplorer`
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/Pyxplorer`
+- macOS: `~/Library/Application Support/Pyxplorer`
 
 ### 5. UI must never block
 
@@ -161,21 +170,21 @@ Clipboard/file-operation shortcuts are wrapped in `_guard()` to avoid conflicts 
 
 ### Shared clipboard
 
-`Ctrl+C` / `Ctrl+X` write clipboard state to `%LOCALAPPDATA%\Pyxplorer\clipboard.json` so copy/cut/paste works across multiple Pyxplorer windows.
+`Ctrl+C` / `Ctrl+X` write clipboard state to `Pyxplorer/clipboard.json` in the per-user app data directory so copy/cut/paste works across multiple Pyxplorer windows.
 
 `Ctrl+V` resolves clipboard from this shared file first, then local in-memory fallback.
 
 ### Lower panel semantics (`Ctrl+Alt+P/T/N`)
 
 - `P` (PDF): load selected PDF into viewer
-- `T` (Terminal): restart embedded PowerShell at current directory
-- `N` (Notes): reset `%LOCALAPPDATA%\Pyxplorer\temp.txt`
+- `T` (Terminal): restart embedded terminal at current directory (`powershell.exe` on Windows, `$SHELL`/`bash` elsewhere)
+- `N` (Notes): reset `Pyxplorer/temp.txt` in app data directory
 - `Escape`: hide lower panel only (no kill)
 - Kill actions run on app shutdown (`Ctrl+W` / window close)
 
 ### Heuristics (`Ctrl+H`)
 
-- Opens/toggles a dedicated window listing scripts in `%LOCALAPPDATA%\Pyxplorer\scripts`
+- Opens/toggles a dedicated window listing scripts in `Pyxplorer/scripts` under the per-user app data directory
 - Runs selected script for each current-directory child as `python script.py PATH`
 - Writes output to dynamic `Heuristic` column in main frame
 - Closing heuristics window removes the dynamic column

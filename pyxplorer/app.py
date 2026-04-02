@@ -6,6 +6,7 @@ import sys
 import queue
 import threading
 import subprocess
+import importlib.util
 import tkinter as tk
 from tkinter import ttk
 
@@ -41,6 +42,36 @@ _SZ_S  = _T["font_size_small"]   # default: 12
 _RH    = _T["row_height"]        # default: 36
 _LOWER_MIN_H = 150
 _LOWER_DEFAULT_H = 260
+
+
+def _copy_engine_name() -> str:
+    return "robocopy" if sys.platform == "win32" else "shutil"
+
+
+def _terminal_backend_name() -> str:
+    if importlib.util.find_spec("winpty") is not None:
+        return "winpty"
+    if importlib.util.find_spec("ptyprocess") is not None:
+        return "ptyprocess"
+    return "none"
+
+
+def _terminal_shell_name() -> str:
+    if sys.platform == "win32":
+        return "powershell"
+    shell = os.environ.get("SHELL")
+    if shell:
+        return os.path.basename(shell)
+    return "bash"
+
+
+def _runtime_capabilities_message() -> str:
+    return (
+        "Runtime: "
+        f"copy={_copy_engine_name()} · "
+        f"pty={_terminal_backend_name()} · "
+        f"shell={_terminal_shell_name()}"
+    )
 
 
 def _apply_win11_style(root: tk.Tk) -> None:
@@ -242,6 +273,7 @@ class App:
             status_cb=self.status_bar.set_status,
             refresh_starred_cb=self.left_panel.refresh_starred,
         )
+        self.status_bar.set_status(_runtime_capabilities_message())
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     def _set_title(self, path: str) -> None:
