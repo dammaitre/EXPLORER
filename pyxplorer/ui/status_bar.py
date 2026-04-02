@@ -1,5 +1,6 @@
 """
 Phase 5 — Status bar: animated scan spinner, item count, selection weight.
+With separate persistent transfer progress area.
 """
 import tkinter as tk
 from tkinter import ttk
@@ -31,6 +32,7 @@ class StatusBar(ttk.Frame):
         self._n_selected: int  = 0
         self._sel_size:   int  = 0
         self._transfer_active: bool = False
+        self._transfer_message: str = ""
 
         self._build()
 
@@ -39,6 +41,7 @@ class StatusBar(ttk.Frame):
     # ------------------------------------------------------------------
 
     def _build(self) -> None:
+        # Left area: navigation/scanning status
         self._text_var = tk.StringVar(value="  Ready")
         ttk.Label(
             self,
@@ -46,22 +49,36 @@ class StatusBar(ttk.Frame):
             style="StatusBar.TLabel",
             anchor="w",
             padding=(8, 0),
-        ).pack(side=tk.LEFT, fill=tk.Y)
+        ).pack(side=tk.LEFT, fill=tk.Y, expand=True)
+
+        # Right area: transfer progress (persistent)
+        self._transfer_frame = ttk.Frame(self, style="StatusBar.TFrame")
+        self._transfer_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 8))
 
         self._pct_var = tk.StringVar(value="")
         self._pct_label = ttk.Label(
-            self,
+            self._transfer_frame,
             textvariable=self._pct_var,
             style="StatusBar.TLabel",
             anchor="e",
             width=5,
         )
+
         self._progress = ttk.Progressbar(
-            self,
+            self._transfer_frame,
             orient="horizontal",
             mode="determinate",
             maximum=100,
             length=220,
+        )
+
+        self._transfer_text_var = tk.StringVar(value="")
+        self._transfer_text_label = ttk.Label(
+            self._transfer_frame,
+            textvariable=self._transfer_text_var,
+            style="StatusBar.TLabel",
+            anchor="e",
+            width=20,
         )
 
     # ------------------------------------------------------------------
@@ -94,15 +111,25 @@ class StatusBar(ttk.Frame):
         if not self._scanning and not self._transfer_active:
             self._text_var.set(f"  {message}")
 
+    def set_skip_message(self) -> None:
+        """Show warning message when current directory is in scan_skip_dirs."""
+        if not self._scanning and not self._transfer_active:
+            self._text_var.set("  ⚠ Directory not to be scanned")
+
     def start_transfer(self, message: str = "Copying…") -> None:
+        """Start displaying transfer progress in the persistent right area."""
         self._transfer_active = True
+        self._transfer_message = message
         self._progress.configure(value=0)
         self._pct_var.set("0%")
-        self._text_var.set(f"  {message}")
-        self._pct_label.pack(side=tk.RIGHT, padx=(2, 6))
-        self._progress.pack(side=tk.RIGHT, fill=tk.X, padx=(0, 6), pady=6)
+        self._transfer_text_var.set(message)
+        # Pack transfer widgets in right-to-left order
+        self._pct_label.pack(side=tk.RIGHT, padx=(2, 0))
+        self._progress.pack(side=tk.RIGHT, fill=tk.X, padx=(4, 0), pady=6)
+        self._transfer_text_label.pack(side=tk.RIGHT, padx=(0, 8))
 
     def update_transfer_progress(self, percent: int) -> None:
+        """Update transfer progress bar. Persists across navigation."""
         if not self._transfer_active:
             return
         pct = max(0, min(100, int(percent)))
@@ -110,12 +137,16 @@ class StatusBar(ttk.Frame):
         self._pct_var.set(f"{pct}%")
 
     def stop_transfer(self) -> None:
+        """Hide transfer progress. Navigation will not affect this."""
         if not self._transfer_active:
             return
         self._transfer_active = False
         self._progress.pack_forget()
         self._pct_label.pack_forget()
+        self._transfer_text_label.pack_forget()
         self._pct_var.set("")
+        self._transfer_text_var.set("")
+        self._transfer_message = ""
 
     # ------------------------------------------------------------------
     # Internal
@@ -130,6 +161,9 @@ class StatusBar(ttk.Frame):
         self.after(_TICK_MS, self._tick)
 
     def _refresh(self) -> None:
+        # Only update left area if transfer is not active
+        if self._transfer_active:
+            return
         if self._n_selected > 0:
             self._text_var.set(
                 f"  {self._n_selected} selected"

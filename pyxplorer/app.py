@@ -12,7 +12,7 @@ from tkinter import ttk
 
 from .state import AppState
 from .core.longpath import normalize, to_display, enable_longpath_registry
-from .core.scanner import SizeScanner, CancelToken
+from .core.scanner import SizeScanner, CancelToken, _is_scan_skipped
 from .ui import icons as _icons_mod
 from .ui.top_bar import TopBar
 from .ui.left_panel import LeftPanel
@@ -522,6 +522,10 @@ class App:
         self.top_bar.update_path(norm)
         self.main_frame.load_dir(norm)
         self.left_panel.load_dir(norm)
+
+        # Check if current directory is in scan_skip_dirs
+        if _is_scan_skipped(norm):
+            self.status_bar.set_skip_message()
 
         dirs = self.main_frame.get_subdir_paths()
         if dirs:

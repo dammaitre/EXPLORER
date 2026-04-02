@@ -51,11 +51,22 @@ _SCAN_SKIP_DIRS_NORM = [_norm_for_match(p) for p in SCAN_SKIP_DIRS]
 
 
 def _is_scan_skipped(path: str) -> bool:
+    """
+    Check if a path should be skipped during scanning.
+    
+    Inverse logic (changed from original):
+    - If path == scan_skip_dir entry → skip
+    - If path is a PARENT of scan_skip_dir entry → skip (prevent scans near root)
+    - If path is a CHILD of scan_skip_dir entry → OK to scan (allow scans within subtrees)
+    """
     candidate = _norm_for_match(path)
     for root in _SCAN_SKIP_DIRS_NORM:
+        # Exact match: skip
         if candidate == root:
             return True
-        if candidate.startswith(root + os.sep):
+        # candidate is a parent of root: skip
+        # (e.g., if root is "A:\B\C" and candidate is "A:\B", skip candidate)
+        if root.startswith(candidate + os.sep):
             return True
     return False
 
