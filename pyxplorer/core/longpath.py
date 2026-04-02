@@ -21,7 +21,11 @@ def normalize(path: "str | pathlib.Path") -> str:
         return p
     if p.startswith(UNC_PREFIX):
         return p
-    abs_p = os.path.abspath(p)
+    # Fast-path: already an absolute drive path — skip the os.path.abspath() syscall.
+    if len(p) >= 3 and p[1] == ":" and p[2] in "/\\":
+        abs_p = p.replace("/", "\\")
+    else:
+        abs_p = os.path.abspath(p)
     # Guard: \\?\ + path must not exceed NTFS_MAX
     if len(UNC_PREFIX) + len(abs_p) > NTFS_MAX:
         # Return without prefix — the path is unusably long; let the caller's

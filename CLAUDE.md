@@ -298,12 +298,17 @@ Clipboard/file-operation shortcuts are wrapped in `_guard()` to avoid conflicts 
 
 ### Search dialog (`Ctrl+F`)
 
+Results are displayed in a table with columns:
+- **Name**: The file or folder name (not the full path)
+- **Relative path**: The parent directory path (relative to search root)
+- **Type**: "file" or "dir"
+
 | Interaction | Action |
 |---|---|
 | Left click on file result | Open file with OS default app |
 | Left click on dir result | Navigate main frame into that directory |
 | Double-click / Enter | Same as left click |
-| Middle click on any result | Navigate main frame to the result's parent directory |
+| Middle click on any result | Open the result's parent directory in a new Pyxplorer window |
 | `Ctrl+Shift+C` | Copy absolute path of focused result to system clipboard |
 
 ---

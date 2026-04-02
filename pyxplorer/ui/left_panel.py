@@ -243,22 +243,11 @@ class LeftPanel(ttk.Frame):
 
         for entry in entries:
             child_iid = self._insert_node(iid, entry.path, f"  {entry.name}")
-            if self._has_subdirs(entry.path):
-                self._insert_dummy(child_iid)
-
-    def _has_subdirs(self, path: str) -> bool:
-        """Quick check — stops at the first subdir found."""
-        try:
-            with os.scandir(normalize(path)) as it:
-                for entry in it:
-                    try:
-                        if entry.is_dir(follow_symlinks=False):
-                            return True
-                    except OSError:
-                        pass
-        except (PermissionError, OSError):
-            pass
-        return False
+            # Always add a dummy so the expand arrow appears without an extra
+            # os.scandir per child (the old _has_subdirs N+1 pattern).
+            # If the directory turns out to be empty, the dummy is removed when
+            # the user expands it and _load_children finds no children.
+            self._insert_dummy(child_iid)
 
     # ------------------------------------------------------------------
     # Click handlers

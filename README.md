@@ -147,7 +147,7 @@ python -m pyxplorer
 - `Ctrl+Shift+N`: create a new folder.
 - `Delete`: permanently delete the selected items.
 - `Ctrl+R`: open the run dialog.
-- `Ctrl+F`: open regex search dialog.
+- `Ctrl+F`: open regex search dialog (results show file name and parent directory path).
 - `Ctrl+Alt+P`: show PDF panel and load selected PDF.
 - `Ctrl+Alt+T`: show terminal panel and restart terminal in current directory.
 - `Ctrl+Alt+N`: show temp notes panel and reset temp file.

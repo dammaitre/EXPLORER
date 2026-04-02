@@ -367,8 +367,9 @@ class MainFrame(ttk.Frame):
     # ------------------------------------------------------------------
 
     def _render_rows(self) -> None:
-        for iid in self._tree.get_children():
-            self._tree.delete(iid)
+        children = self._tree.get_children()
+        if children:
+            self._tree.delete(*children)
         self._item_data.clear()
         self._path_iids.clear()
         self._more_iid = None
