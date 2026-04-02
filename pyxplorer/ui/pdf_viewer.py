@@ -130,6 +130,21 @@ class PDFViewer(ttk.Frame):
     def show_message(self, message: str) -> None:
         self._message_var.set(message)
 
+    @property
+    def is_loading(self) -> bool:
+        """True while a render worker is active and pages are still pending."""
+        return (
+            self._doc is not None
+            and self._loaded_count + self._failed_count < self._page_count
+        )
+
+    def cancel_load(self) -> None:
+        """Cancel an in-progress load and reset the viewer."""
+        if self.is_loading:
+            self.unload()
+            self.show_message("Load cancelled.")
+            self._status_cb("PDF load cancelled")
+
     def unload(self) -> None:
         self._load_token += 1
         if self._pump_after is not None:

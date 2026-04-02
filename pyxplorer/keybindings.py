@@ -239,6 +239,7 @@ def bind_keys(
     transfer_start_cb=None,
     transfer_progress_cb=None,
     transfer_stop_cb=None,
+    cancel_pdf_load_cb=None,
 ) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
@@ -357,6 +358,9 @@ def bind_keys(
                 focused = None
             if focused is main_frame._tree:
                 main_frame.collapse_selection_to_last()
+                return "break"
+            # Cancel an in-progress PDF load before hiding the panel
+            if cancel_pdf_load_cb is not None and cancel_pdf_load_cb():
                 return "break"
             hide_lower_cb()
             return "break"

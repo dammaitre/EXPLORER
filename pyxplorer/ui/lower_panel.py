@@ -136,6 +136,13 @@ class LowerPanel(ttk.Frame):
         self._title_var.set(f"Temp notes — {self._notes.temp_path_display}")
         self._notes.load()
 
+    def cancel_pdf_if_loading(self) -> bool:
+        """Cancel an in-progress PDF load. Returns True if a load was cancelled."""
+        if self.active_tab == "pdf" and self._pdf_viewer.is_loading:
+            self._pdf_viewer.cancel_load()
+            return True
+        return False
+
     def shutdown(self) -> None:
         self._pdf_viewer.unload()
         self._terminal.shutdown()

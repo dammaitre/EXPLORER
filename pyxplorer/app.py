@@ -287,6 +287,7 @@ class App:
             transfer_start_cb=self.status_bar.start_transfer,
             transfer_progress_cb=self.status_bar.update_transfer_progress,
             transfer_stop_cb=self.status_bar.stop_transfer,
+            cancel_pdf_load_cb=self.lower_panel.cancel_pdf_if_loading,
         )
         self.status_bar.set_status(_runtime_capabilities_message(self._dnd_enabled))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
