@@ -240,6 +240,8 @@ def bind_keys(
     transfer_progress_cb=None,
     transfer_stop_cb=None,
     cancel_pdf_load_cb=None,
+    open_image_cb=None,
+    cancel_image_load_cb=None,
 ) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
@@ -339,10 +341,15 @@ def bind_keys(
         root.bind("<Control-Alt-t>", lambda e: open_terminal_cb())
         root.bind("<Control-Alt-T>", lambda e: open_terminal_cb())
 
-    # ── Lower temp notes (Ctrl+Alt+N) ────────────────────────────────
+    # ── Lower temp notes (Ctrl+Alt+N) ────────────────────────────────────
     if open_notes_cb is not None:
         root.bind("<Control-Alt-n>", lambda e: open_notes_cb())
         root.bind("<Control-Alt-N>", lambda e: open_notes_cb())
+
+    # ── Lower image viewer (Ctrl+Alt+I) ──────────────────────────────
+    if open_image_cb is not None:
+        root.bind("<Control-Alt-i>", lambda e: open_image_cb())
+        root.bind("<Control-Alt-I>", lambda e: open_image_cb())
 
     # ── Heuristics window toggle (Ctrl+H) ────────────────────────────
     if toggle_heuristics_cb is not None:
@@ -361,6 +368,9 @@ def bind_keys(
                 return "break"
             # Cancel an in-progress PDF load before hiding the panel
             if cancel_pdf_load_cb is not None and cancel_pdf_load_cb():
+                return "break"
+            # Cancel an in-progress image load before hiding the panel
+            if cancel_image_load_cb is not None and cancel_image_load_cb():
                 return "break"
             hide_lower_cb()
             return "break"

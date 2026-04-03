@@ -288,6 +288,8 @@ class App:
             transfer_progress_cb=self.status_bar.update_transfer_progress,
             transfer_stop_cb=self.status_bar.stop_transfer,
             cancel_pdf_load_cb=self.lower_panel.cancel_pdf_if_loading,
+            open_image_cb=self.open_image_panel,
+            cancel_image_load_cb=self.lower_panel.cancel_image_if_loading,
         )
         self.status_bar.set_status(_runtime_capabilities_message(self._dnd_enabled))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -427,6 +429,10 @@ class App:
     def open_notes_panel(self) -> None:
         self._ensure_lower_panel_visible()
         self.lower_panel.request_notes()
+
+    def open_image_panel(self) -> None:
+        self._ensure_lower_panel_visible()
+        self.lower_panel.request_image()
 
     def close(self) -> None:
         if self._heuristics_win and self._heuristics_win.alive:

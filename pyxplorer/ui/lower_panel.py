@@ -6,6 +6,7 @@ from typing import Any
 from ..core.longpath import normalize, to_display
 from ..settings import THEME as _T
 from .embedded_terminal import EmbeddedTerminal
+from .image_viewer import ImageViewer
 from .pdf_viewer import PDFViewer
 from .temp_notepad import TempNotepad
 
@@ -28,6 +29,7 @@ class LowerPanel(ttk.Frame):
             "pdf": "PDF viewer",
             "terminal": "Terminal",
             "notes": "Temp notes",
+            "image": "Image viewer",
         }
 
         self._build()
@@ -36,7 +38,7 @@ class LowerPanel(ttk.Frame):
         tabs = ttk.Frame(self, style="LowerTabs.TFrame")
         tabs.pack(side=tk.TOP, fill=tk.X)
 
-        for key, label in (("pdf", "P"), ("terminal", "T"), ("notes", "N")):
+        for key, label in (("pdf", "P"), ("terminal", "T"), ("notes", "N"), ("image", "I")):
             button = ttk.Button(
                 tabs,
                 text=label,
@@ -67,14 +69,16 @@ class LowerPanel(ttk.Frame):
         content = ttk.Frame(self, style="LowerContent.TFrame")
         content.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self._pdf_viewer = PDFViewer(content, self.root, status_cb=self._status_cb)
-        self._terminal = EmbeddedTerminal(content, self.root, status_cb=self._status_cb)
-        self._notes = TempNotepad(content, self.root, status_cb=self._status_cb)
+        self._pdf_viewer   = PDFViewer(content, self.root, status_cb=self._status_cb)
+        self._terminal     = EmbeddedTerminal(content, self.root, status_cb=self._status_cb)
+        self._notes        = TempNotepad(content, self.root, status_cb=self._status_cb)
+        self._image_viewer = ImageViewer(content, self.root, status_cb=self._status_cb)
 
         self._tab_frames = {
-            "pdf": self._pdf_viewer,
+            "pdf":     self._pdf_viewer,
             "terminal": self._terminal,
-            "notes": self._notes,
+            "notes":   self._notes,
+            "image":   self._image_viewer,
         }
 
         self.show_tab("pdf")
@@ -107,6 +111,8 @@ class LowerPanel(ttk.Frame):
             self._terminal.focus_terminal()
         elif self.active_tab == "notes":
             self._notes.focus_editor()
+        elif self.active_tab == "image":
+            self._image_viewer.focus_viewer()
 
     def request_pdf(self) -> None:
         self.show_tab("pdf")
@@ -143,7 +149,32 @@ class LowerPanel(ttk.Frame):
             return True
         return False
 
+    def request_image(self) -> None:
+        self.show_tab("image")
+        paths = list(self.state.selection)
+        if len(paths) != 1:
+            self._image_viewer.show_message(
+                "Select a single image file and press Ctrl+Alt+I."
+            )
+            self._status_cb("Image load skipped: select a single image file")
+            return
+        path = normalize(paths[0])
+        if os.path.isdir(path):
+            self._image_viewer.show_message("Select an image file, not a directory.")
+            self._status_cb("Image load skipped: selected item is a directory")
+            return
+        self._title_var.set(f"Image viewer — {os.path.basename(to_display(path))}")
+        self._image_viewer.load_image(path)
+
+    def cancel_image_if_loading(self) -> bool:
+        """Cancel an in-progress image load. Returns True if a load was cancelled."""
+        if self.active_tab == "image" and self._image_viewer.is_loading:
+            self._image_viewer.cancel_load()
+            return True
+        return False
+
     def shutdown(self) -> None:
         self._pdf_viewer.unload()
+        self._image_viewer.unload()
         self._terminal.shutdown()
         self._notes.shutdown()
