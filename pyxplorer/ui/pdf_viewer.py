@@ -12,7 +12,7 @@ from typing import Callable, Any
 from ..core.ocr import extract_text_from_image, ocr_backend_status
 from ..core.longpath import normalize, to_display
 from ..logging import vprint
-from ..settings import THEME as _T, SCROLL_SPEED
+from ..settings import THEME as _T, SCROLL_SPEED, DEFAULT_PDF_ZOOM
 from .scroll_utils import make_autohide_pack_setter
 
 try:
@@ -52,7 +52,7 @@ _QUEUE_TICK_MS = 35
 _ZOOM_MIN = 0.5
 _ZOOM_MAX = 3.0
 _ZOOM_STEP = 1.1
-_DEFAULT_ZOOM = 1.25
+_DEFAULT_ZOOM = min(_ZOOM_MAX, max(_ZOOM_MIN, DEFAULT_PDF_ZOOM))
 _SCROLL_SPEED = SCROLL_SPEED
 
 

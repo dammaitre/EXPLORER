@@ -1,5 +1,6 @@
 {
   "scroll_speed": 1.5,
+  "default-pdf-zoom": 150,
   "scan_skip_dirs": [
     "R:\\P013926_OTI_CDGX\\",
     "R:\\",

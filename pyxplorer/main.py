@@ -1,6 +1,21 @@
 import argparse
+import os
 from .app import App
 from .logging import set_verbose
+
+
+def _sanitize_cli_path(path: str | None) -> str | None:
+    if path is None:
+        return None
+    cleaned = path.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in ('"', "'"):
+        cleaned = cleaned[1:-1].strip()
+    if not cleaned:
+        return None
+    cleaned = os.path.expanduser(cleaned)
+    return os.path.normpath(cleaned)
 
 
 def main():
@@ -19,7 +34,7 @@ def main():
     )
     args = parser.parse_args()
     set_verbose(args.verbose)
-    App(start_path=args.path).run()
+    App(start_path=_sanitize_cli_path(args.path)).run()
 
 
 if __name__ == "__main__":

@@ -211,6 +211,7 @@ Pyxplorer stores clipboard, heuristics scripts, starred entries, and temp notes 
 - row heights
 - optional `start_dirs` for the left panel root nodes
 - `scan_skip_dirs` for directory-size scan suppression
+- `default-pdf-zoom` for PDF viewer initial zoom (example: `150` for 150%, or `1.5`)
 
 `scan_skip_dirs` semantics:
 

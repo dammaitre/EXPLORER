@@ -12,6 +12,7 @@ _SETTINGS_FILE = Path(__file__).parent / "settings.json"
 _DEFAULTS: dict = {
     "ext_skipped": [],
     "scroll_speed": 1.0,
+    "default_pdf_zoom": 1.5,
     "scan_skip_dirs": [],
     "theme": {
         "bg":              "#202020",
@@ -53,6 +54,18 @@ def _load() -> dict:
         scroll_speed = float(_DEFAULTS["scroll_speed"])
     scroll_speed = max(0.1, min(10.0, scroll_speed))
 
+    raw_default_pdf_zoom = raw.get(
+        "default-pdf-zoom",
+        raw.get("default_pdf_zoom", _DEFAULTS["default_pdf_zoom"]),
+    )
+    try:
+        default_pdf_zoom = float(raw_default_pdf_zoom)
+    except (TypeError, ValueError):
+        default_pdf_zoom = float(_DEFAULTS["default_pdf_zoom"])
+    if default_pdf_zoom > 10.0:
+        default_pdf_zoom = default_pdf_zoom / 100.0
+    default_pdf_zoom = max(0.5, min(3.0, default_pdf_zoom))
+
     start_dirs = [
         os.path.expanduser(p)
         for p in raw.get("start_dirs", _DEFAULTS["start_dirs"])
@@ -91,6 +104,7 @@ def _load() -> dict:
         "scan_skip_dirs": unique_skip_dirs,
         "ext_skipped": ext_skipped,
         "scroll_speed": scroll_speed,
+        "default_pdf_zoom": default_pdf_zoom,
     }
 
 
@@ -101,3 +115,4 @@ START_DIRS: list  = _cfg["start_dirs"]
 SCAN_SKIP_DIRS: list = _cfg["scan_skip_dirs"]
 EXT_SKIPPED: set  = _cfg["ext_skipped"]   # lowercase extensions with leading dot
 SCROLL_SPEED: float = _cfg["scroll_speed"]
+DEFAULT_PDF_ZOOM: float = _cfg["default_pdf_zoom"]

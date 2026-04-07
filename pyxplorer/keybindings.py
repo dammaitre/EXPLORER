@@ -135,7 +135,7 @@ def _do_paste(
 def _copy_path(root: tk.Tk, state) -> None:
     """Ctrl+Shift+C — copy display path(s) to the OS clipboard."""
     paths = state.selection if state.selection else [state.current_dir]
-    text  = "\n".join(to_display(p) for p in paths)
+    text  = "\n".join(f'"{to_display(p)}"' for p in paths)
     root.clipboard_clear()
     root.clipboard_append(text)
 
