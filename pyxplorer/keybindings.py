@@ -140,6 +140,40 @@ def _copy_path(root: tk.Tk, state) -> None:
     root.clipboard_append(text)
 
 
+def _display_name(path: str) -> str:
+    disp = to_display(path).rstrip("\\/")
+    if not disp:
+        return path
+    name = os.path.basename(disp)
+    return name or disp
+
+
+def _copy_name(root: tk.Tk, state, main_frame, left_panel=None) -> None:
+    """Ctrl+Shift+N — copy selected item name(s) to the OS clipboard."""
+    try:
+        focused = root.focus_get()
+    except Exception:
+        focused = None
+
+    names: list[str] = []
+
+    if left_panel is not None and focused is left_panel._tree:
+        path = left_panel.get_current_path()
+        if path:
+            names = [_display_name(path)]
+    elif state.selection:
+        names = [_display_name(p) for p in state.selection if isinstance(p, str) and p]
+    else:
+        names = [_display_name(state.current_dir)]
+
+    if not names:
+        return
+
+    text = "\n".join(names)
+    root.clipboard_clear()
+    root.clipboard_append(text)
+
+
 # ── New folder dialog ──────────────────────────────────────────────────────────
 
 def _new_folder_dialog(root: tk.Tk, state, refresh_cb) -> None:
@@ -228,6 +262,7 @@ def bind_keys(
     state,
     top_bar,
     main_frame,
+    left_panel=None,
     open_pdf_cb=None,
     open_terminal_cb=None,
     open_notes_cb=None,
@@ -278,8 +313,11 @@ def bind_keys(
     # In tkinter, capital letter in binding implies Shift is held
     root.bind("<Control-C>", lambda e: _copy_path(root, state))
 
-    # ── New folder (Ctrl+Shift+N) ──────────────────────────────────────
-    root.bind("<Control-N>", _guard(lambda: _new_folder_dialog(root, state, _refresh)))
+    # ── Name string to system clipboard (Ctrl+Shift+N) ─────────────────
+    root.bind("<Control-N>", _guard(lambda: _copy_name(root, state, main_frame, left_panel)))
+
+    # ── New folder dialog (Ctrl+Shift+X) ───────────────────────────────
+    root.bind("<Control-X>", _guard(lambda: _new_folder_dialog(root, state, _refresh)))
 
     # ── New window at current dir (Ctrl+N) ─────────────────────────────
     root.bind("<Control-n>", _guard(lambda: _open_new_window(state.current_dir)))
@@ -295,7 +333,13 @@ def bind_keys(
         if _search_holder and _search_holder[0].alive:
             _search_holder[0].lift()
         else:
-            dlg = SearchDialog(root, state, navigate_cb=main_frame.navigate_cb)
+            dlg = SearchDialog(
+                root,
+                state,
+                navigate_cb=main_frame.navigate_cb,
+                open_pdf_cb=open_pdf_cb,
+                open_image_cb=open_image_cb,
+            )
             if _search_holder:
                 _search_holder[0] = dlg
             else:

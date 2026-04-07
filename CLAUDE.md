@@ -286,8 +286,9 @@ Clipboard/file-operation shortcuts are wrapped in `_guard()` to avoid conflicts 
 | `Ctrl+X` | Cut selected items |
 | `Ctrl+V` | Async paste into current directory (shared clipboard aware) |
 | `Ctrl+Shift+C` | Copy display path string to system clipboard |
+| `Ctrl+Shift+N` | Copy selected item name(s) to system clipboard |
+| `Ctrl+Shift+X` | Create new folder (prompt dialog) |
 | `Ctrl+N` | Open current directory in a new Pyxplorer window |
-| `Ctrl+Shift+N` | Create new folder (prompt dialog) |
 | `Ctrl+R` | Open run dialog (Win+R style) |
 | `Ctrl+F` | Open regex search dialog |
 | `Ctrl+Alt+P` | Show PDF tab and load selected PDF |
@@ -330,6 +331,7 @@ Results are displayed in a table with columns:
 | Double-click / Enter | Same as left click |
 | Middle click on any result | Open the result's parent directory in a new Pyxplorer window |
 | `Ctrl+Shift+C` | Copy absolute path of focused result to system clipboard |
+| `Ctrl+Shift+N` | Copy focused result name to system clipboard |
 
 ---
 

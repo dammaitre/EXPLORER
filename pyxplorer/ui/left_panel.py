@@ -439,6 +439,17 @@ class LeftPanel(ttk.Frame):
             # Expand path components until we reach (or get as close as possible to) path
             self._expand_to(path)
 
+    def get_current_path(self) -> str | None:
+        """Return the currently highlighted/focused directory path in the tree."""
+        iid = self._current_iid if self._current_iid and self._tree.exists(self._current_iid) else None
+        if not iid:
+            focus_iid = self._tree.focus()
+            iid = focus_iid if focus_iid and self._tree.exists(focus_iid) else None
+        if not iid:
+            return None
+        path = self._node_paths.get(iid)
+        return path if isinstance(path, str) and path else None
+
     # ------------------------------------------------------------------
     # Highlight helpers
     # ------------------------------------------------------------------

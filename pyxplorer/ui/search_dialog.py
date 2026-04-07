@@ -17,7 +17,11 @@ from tkinter import ttk
 from ..core.longpath import normalize, to_display
 from ..core.scanner import CancelToken
 from ..core.search import search_names
+from ..core.fs import fmt_size
+from ..core.heuristics import list_heuristic_scripts, run_heuristic
+from ..settings import EXT_SKIPPED
 from ..settings import THEME as _T
+from . import icons as _icons_mod
 from .scroll_utils import make_autohide_pack_setter
 
 _FONT   = _T["font_family"]
@@ -41,15 +45,27 @@ class SearchDialog:
     raises the existing window.
     """
 
-    def __init__(self, root: tk.Tk, state, navigate_cb):
+    def __init__(self, root: tk.Tk, state, navigate_cb,
+                 open_pdf_cb=None, open_image_cb=None):
         self._root        = root
         self._state       = state
         self._navigate_cb = navigate_cb
+        self._open_pdf_cb = open_pdf_cb
+        self._open_image_cb = open_image_cb
 
         self._token:      CancelToken | None = None
         self._queue:      queue.Queue        = queue.Queue()
+        self._size_tasks: queue.Queue        = queue.Queue()
         self._poll_id:    str | None         = None
         self._debounce_id:str | None         = None
+        self._result_meta: dict[str, dict]   = {}
+        self._size_token: int                = 0
+        self._heuristic_token: int           = 0
+        self._heuristic_picker: tk.Toplevel | None = None
+        self._icons: dict                    = _icons_mod.load(self._root, size=16)
+        self._size_worker_stop = threading.Event()
+        self._size_worker = threading.Thread(target=self._size_worker_loop, daemon=True)
+        self._size_worker.start()
 
         self._build()
 
@@ -110,16 +126,30 @@ class SearchDialog:
 
         self._tree = ttk.Treeview(
             tree_outer,
-            columns=("name", "path", "type"),
-            show="headings",
+            columns=("path", "size", "heur"),
+            show="tree headings",
             selectmode="browse",
         )
-        self._tree.heading("name", text="Name")
+        self._tree.heading("#0", text="Name")
         self._tree.heading("path", text="Relative path")
-        self._tree.heading("type", text="Type")
-        self._tree.column("name", width=220, stretch=False, minwidth=120)
-        self._tree.column("path", width=460, stretch=True,  minwidth=200)
-        self._tree.column("type", width=52,  stretch=False, minwidth=40)
+        self._tree.heading("size", text="Size")
+        self._tree.heading("heur", text="")
+        self._tree.column("#0", width=250, stretch=False, minwidth=120, anchor="w")
+        self._tree.column("path", width=380, stretch=True, minwidth=200, anchor="w")
+        self._tree.column("size", width=110, stretch=False, minwidth=80, anchor="e")
+        self._tree.column("heur", width=0, stretch=False, minwidth=0, anchor="w")
+
+        self._tree.tag_configure(
+            "dir",
+            foreground=TEXT,
+            font=(_FONT, _SZ, "bold"),
+        )
+        self._tree.tag_configure("file", foreground=TEXT)
+        self._tree.tag_configure(
+            "empty_dir",
+            foreground=TEXT_M,
+            font=(_FONT, _SZ, "bold"),
+        )
 
         vsb = ttk.Scrollbar(tree_outer, orient="vertical",
                             command=self._tree.yview)
@@ -132,9 +162,24 @@ class SearchDialog:
         self._tree.bind("<ButtonRelease-2>", self._on_middle_click)
         self._tree.bind("<Double-1>",        self._on_double_click)
         self._tree.bind("<Return>",          self._on_double_click)
+        self._tree.bind("<Up>",              self._on_up)
+        self._tree.bind("<Down>",            self._on_down)
+        self._tree.bind("<Control-h>",       self._on_run_heuristic_hotkey)
+        self._tree.bind("<Control-H>",       self._on_run_heuristic_hotkey)
         # Ctrl+Shift+C: capital C in tkinter means Shift is held
         self._tree.bind("<Control-C>",       self._on_copy_path)
         self._dlg.bind("<Control-C>",        self._on_copy_path)
+        # Ctrl+Shift+N: capital N in tkinter means Shift is held
+        self._tree.bind("<Control-N>",       self._on_copy_name)
+        self._dlg.bind("<Control-N>",        self._on_copy_name)
+        self._dlg.bind("<Up>",               self._on_up)
+        self._dlg.bind("<Down>",             self._on_down)
+        self._dlg.bind("<Control-Alt-p>",    self._on_open_pdf)
+        self._dlg.bind("<Control-Alt-P>",    self._on_open_pdf)
+        self._dlg.bind("<Control-Alt-i>",    self._on_open_image)
+        self._dlg.bind("<Control-Alt-I>",    self._on_open_image)
+        self._dlg.bind("<Control-h>",        self._on_run_heuristic_hotkey)
+        self._dlg.bind("<Control-H>",        self._on_run_heuristic_hotkey)
 
         self._entry.focus_set()
 
@@ -159,9 +204,14 @@ class SearchDialog:
             self._entry.configure(style="TEntry")
             self._status_var.set("Type a regex pattern…")
             self._tree.delete(*self._tree.get_children())
+            self._result_meta.clear()
             if self._token:
                 self._token.cancel()
                 self._token = None
+            self._size_token += 1
+            self._heuristic_token += 1
+            self._tree.heading("heur", text="")
+            self._tree.column("heur", width=0, stretch=False, minwidth=0, anchor="w")
             return
 
         # Validate regex before launching thread
@@ -183,9 +233,19 @@ class SearchDialog:
                 self._queue.get_nowait()
             except queue.Empty:
                 break
+        while not self._size_tasks.empty():
+            try:
+                self._size_tasks.get_nowait()
+            except queue.Empty:
+                break
 
         self._token = CancelToken()
+        self._size_token += 1
+        self._heuristic_token += 1
         self._tree.delete(*self._tree.get_children())
+        self._result_meta.clear()
+        self._tree.heading("heur", text="")
+        self._tree.column("heur", width=0, stretch=False, minwidth=0, anchor="w")
         self._status_var.set("Searching…")
 
         threading.Thread(
@@ -210,11 +270,60 @@ class SearchDialog:
 
                 if kind == "search_result":
                     _, name, rel, ftype = msg
-                    # Extract only the parent folder path (not the file/folder itself)
+                    root_dir = normalize(self._state.current_dir)
+                    full_path = normalize(os.path.join(root_dir, rel))
                     parent_rel = os.path.dirname(rel) if rel else ""
-                    self._tree.insert("", "end", values=(name, parent_rel, ftype))
+                    if ftype == "file":
+                        size_str, size_bytes = self._file_size_display(full_path)
+                    else:
+                        size_str, size_bytes = "—", -1
+
+                    icon = self._icons.get("folder" if ftype == "dir" else "file")
+                    iid = self._tree.insert(
+                        "",
+                        "end",
+                        text=name,
+                        image=icon,
+                        values=(parent_rel, size_str, ""),
+                        tags=("dir" if ftype == "dir" else "file",),
+                    )
+                    self._result_meta[iid] = {
+                        "full_path": full_path,
+                        "parent": os.path.dirname(full_path),
+                        "ftype": ftype,
+                        "size_bytes": size_bytes,
+                    }
+                    if ftype == "dir":
+                        self._size_tasks.put((self._size_token, iid, full_path))
+
                     n = len(self._tree.get_children())
                     self._status_var.set(f"{n} result(s) so far…")
+
+                elif kind == "search_size":
+                    _, token, iid, size_bytes = msg
+                    if token != self._size_token or not self._tree.exists(iid):
+                        continue
+                    meta = self._result_meta.get(iid)
+                    if not meta:
+                        continue
+                    meta["size_bytes"] = size_bytes
+                    self._tree.set(iid, "size", fmt_size(size_bytes))
+                    if meta.get("ftype") == "dir" and size_bytes == 0:
+                        self._tree.item(iid, tags=("empty_dir",))
+
+                elif kind == "search_heuristic_result":
+                    _, token, iid, value = msg
+                    if token != self._heuristic_token or not self._tree.exists(iid):
+                        continue
+                    self._tree.set(iid, "heur", value)
+
+                elif kind == "search_heuristic_done":
+                    _, token, script_name, done, total = msg
+                    if token != self._heuristic_token:
+                        continue
+                    self._status_var.set(
+                        f"Heuristic '{script_name}' complete — {done}/{total} result(s)"
+                    )
 
                 elif kind == "search_done":
                     n = len(self._tree.get_children())
@@ -243,18 +352,232 @@ class SearchDialog:
         parent_dir — directory that contains it
         ftype      — "dir" | "file"
         """
-        values = self._tree.item(iid, "values")
-        if not values:
+        meta = self._result_meta.get(iid)
+        if not meta:
             return None
-        name, rel, ftype = values
-        root_dir  = to_display(self._state.current_dir)
-        full_path = os.path.normpath(os.path.join(root_dir, rel))
-        parent    = os.path.dirname(full_path)
+        full_path = meta.get("full_path")
+        parent = meta.get("parent")
+        ftype = meta.get("ftype")
+        if not isinstance(full_path, str) or not isinstance(parent, str) or not isinstance(ftype, str):
+            return None
         return full_path, parent, ftype
+
+    @staticmethod
+    def _file_size_display(path: str) -> tuple[str, int]:
+        try:
+            size = int(os.path.getsize(normalize(path)))
+            return fmt_size(size), size
+        except OSError:
+            return "—", -1
+
+    @staticmethod
+    def _dir_size(path: str) -> int:
+        total = 0
+        stack = [normalize(path)]
+        while stack:
+            current = stack.pop()
+            try:
+                with os.scandir(current) as it:
+                    for entry in it:
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                stack.append(entry.path)
+                            elif entry.is_file(follow_symlinks=False):
+                                if EXT_SKIPPED and os.path.splitext(entry.name)[1].lower() in EXT_SKIPPED:
+                                    continue
+                                total += int(entry.stat(follow_symlinks=False).st_size)
+                            elif entry.is_symlink() and entry.is_file(follow_symlinks=True):
+                                if EXT_SKIPPED and os.path.splitext(entry.name)[1].lower() in EXT_SKIPPED:
+                                    continue
+                                try:
+                                    total += int(entry.stat(follow_symlinks=True).st_size)
+                                except OSError:
+                                    pass
+                        except OSError:
+                            continue
+            except OSError:
+                continue
+        return max(0, total)
+
+    def _size_worker_loop(self) -> None:
+        while not self._size_worker_stop.is_set():
+            try:
+                task = self._size_tasks.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if task is None:
+                break
+            token, iid, path = task
+            if token != self._size_token:
+                continue
+            size_bytes = self._dir_size(path)
+            if token != self._size_token:
+                continue
+            self._queue.put(("search_size", token, iid, size_bytes))
 
     def _focused_iid(self) -> str | None:
         iid = self._tree.focus()
         return iid if iid else None
+
+    def _move_selection(self, step: int) -> str:
+        items = list(self._tree.get_children())
+        if not items:
+            return "break"
+        current = self._focused_iid()
+        if not current or current not in items:
+            target = items[0] if step > 0 else items[-1]
+        else:
+            idx = items.index(current)
+            target = items[(idx + step) % len(items)]
+        self._tree.selection_set(target)
+        self._tree.focus(target)
+        self._tree.see(target)
+        return "break"
+
+    def _selected_result(self) -> tuple[str, str, str] | None:
+        iid = self._focused_iid()
+        if not iid:
+            sel = self._tree.selection()
+            if not sel:
+                return None
+            iid = sel[0]
+        return self._result_paths(iid)
+
+    def _on_up(self, event=None) -> str:
+        return self._move_selection(-1)
+
+    def _on_down(self, event=None) -> str:
+        return self._move_selection(+1)
+
+    def _on_open_pdf(self, event=None) -> str:
+        if self._open_pdf_cb is None:
+            return "break"
+        result = self._selected_result()
+        if not result:
+            return "break"
+        full_path, _, ftype = result
+        if ftype != "file" or not full_path.lower().endswith(".pdf"):
+            self._status_var.set("Select a PDF result first.")
+            return "break"
+        self._state.selection = [full_path]
+        self._open_pdf_cb()
+        return "break"
+
+    def _on_open_image(self, event=None) -> str:
+        if self._open_image_cb is None:
+            return "break"
+        result = self._selected_result()
+        if not result:
+            return "break"
+        full_path, _, ftype = result
+        if ftype != "file":
+            self._status_var.set("Select an image result first.")
+            return "break"
+        self._state.selection = [full_path]
+        self._open_image_cb()
+        return "break"
+
+    def _on_run_heuristic_hotkey(self, event=None) -> str:
+        scripts = list_heuristic_scripts()
+        if not scripts:
+            self._status_var.set("No heuristic scripts found.")
+            return "break"
+        if len(scripts) == 1:
+            script = scripts[0]
+            self._run_heuristic_for_results(str(script), script.stem)
+            return "break"
+        self._open_heuristic_picker(scripts)
+        return "break"
+
+    def _open_heuristic_picker(self, scripts) -> None:
+        if self._heuristic_picker and self._heuristic_picker.winfo_exists():
+            self._heuristic_picker.lift()
+            self._heuristic_picker.focus_force()
+            return
+
+        win = tk.Toplevel(self._dlg)
+        self._heuristic_picker = win
+        win.title("Run heuristic on search results")
+        win.geometry("420x360")
+        win.transient(self._dlg)
+
+        ttk.Label(
+            win,
+            text="Choose a heuristic script:",
+            font=(_FONT, _SZ_S),
+            foreground=TEXT_M,
+        ).pack(anchor="w", padx=12, pady=(10, 6))
+
+        lb = tk.Listbox(win, activestyle="dotbox", font=(_FONT, _SZ))
+        lb.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
+        for script in scripts:
+            lb.insert(tk.END, script.name)
+        lb.selection_set(0)
+        lb.focus_set()
+
+        def _run_selected(event=None):
+            sel = lb.curselection()
+            if not sel:
+                return "break"
+            script = scripts[sel[0]]
+            try:
+                win.destroy()
+            except Exception:
+                pass
+            self._run_heuristic_for_results(str(script), script.stem)
+            return "break"
+
+        def _close(event=None):
+            try:
+                win.destroy()
+            except Exception:
+                pass
+            return "break"
+
+        lb.bind("<Double-1>", _run_selected)
+        lb.bind("<Return>", _run_selected)
+        win.bind("<Return>", _run_selected)
+        win.bind("<Escape>", _close)
+
+    def _run_heuristic_for_results(self, script_path: str, script_name: str) -> None:
+        iids = list(self._tree.get_children())
+        if not iids:
+            self._status_var.set("No search results to evaluate.")
+            return
+
+        self._heuristic_token += 1
+        token = self._heuristic_token
+        self._tree.heading("heur", text=script_name)
+        self._tree.column("heur", width=220, stretch=True, minwidth=120, anchor="w")
+        for iid in iids:
+            if self._tree.exists(iid):
+                self._tree.set(iid, "heur", "")
+
+        self._status_var.set(f"Running heuristic '{script_name}' on {len(iids)} result(s)…")
+
+        def _worker():
+            done = 0
+            total = len(iids)
+            for iid in iids:
+                if token != self._heuristic_token:
+                    return
+                meta = self._result_meta.get(iid)
+                if not meta:
+                    continue
+                path = meta.get("full_path")
+                if not isinstance(path, str):
+                    continue
+                try:
+                    value = run_heuristic(script_path, to_display(path))
+                except subprocess.TimeoutExpired:
+                    value = "ERR: timeout"
+                except Exception as exc:
+                    value = f"ERR: {str(exc)[:80]}"
+                done += 1
+                self._queue.put(("search_heuristic_result", token, iid, value))
+            self._queue.put(("search_heuristic_done", token, script_name, done, total))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # Left click — open file with OS default app / navigate into dir
     def _on_left_click(self, event: tk.Event) -> None:
@@ -311,6 +634,20 @@ class SearchDialog:
         self._root.clipboard_clear()
         self._root.clipboard_append(full_path)
 
+    # Ctrl+Shift+N — copy selected item name to OS clipboard
+    def _on_copy_name(self, event=None) -> None:
+        iid = self._focused_iid()
+        if not iid:
+            return
+        result = self._result_paths(iid)
+        if not result:
+            return
+        full_path, _, _ = result
+        display = to_display(full_path).rstrip("\\/")
+        name = os.path.basename(display) if display else full_path
+        self._root.clipboard_clear()
+        self._root.clipboard_append(name or full_path)
+
     # Open a file with the OS default application
     def _open_file(self, path: str) -> None:
         try:
@@ -331,6 +668,15 @@ class SearchDialog:
     def _on_close(self) -> None:
         if self._token:
             self._token.cancel()
+        self._size_token += 1
+        self._heuristic_token += 1
+        self._size_worker_stop.set()
+        self._size_tasks.put(None)
+        if self._heuristic_picker and self._heuristic_picker.winfo_exists():
+            try:
+                self._heuristic_picker.destroy()
+            except Exception:
+                pass
         if self._poll_id:
             try:
                 self._dlg.after_cancel(self._poll_id)

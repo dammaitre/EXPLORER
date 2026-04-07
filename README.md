@@ -147,8 +147,9 @@ python -m pyxplorer
 - `Ctrl+X`: cut selected items into the app clipboard.
 - `Ctrl+V`: async paste into current directory (cross-instance shared clipboard).
 - `Ctrl+Shift+C`: copy current path or selected paths to the system clipboard.
+- `Ctrl+Shift+N`: copy selected item name(s) to the system clipboard.
+- `Ctrl+Shift+X`: create a new folder.
 - `Ctrl+N`: open current directory in a new window.
-- `Ctrl+Shift+N`: create a new folder.
 - `Delete`: permanently delete the selected items.
 - `Ctrl+R`: open the run dialog.
 - `Ctrl+F`: open regex search dialog (results show file name and parent directory path).

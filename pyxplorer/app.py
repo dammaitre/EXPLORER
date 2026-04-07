@@ -276,6 +276,7 @@ class App:
             self.state,
             self.top_bar,
             self.main_frame,
+            self.left_panel,
             open_pdf_cb=self.open_pdf_panel,
             open_terminal_cb=self.open_terminal_panel,
             open_notes_cb=self.open_notes_panel,
