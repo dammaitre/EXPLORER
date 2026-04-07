@@ -789,13 +789,20 @@ class MainFrame(ttk.Frame):
             self._dnd_enabled = False
 
     def _on_drag_init(self, event):
+        x = self._event_tree_x(event)
+        y = self._event_tree_y(event)
+        region = self._tree.identify_region(x, y)
+        if region not in ("tree", "cell"):
+            return (COPY, DND_FILES, "")
+
         if not (self._alt_drag_intent or self._is_alt_pressed(event)):
             return (COPY, DND_FILES, "")
 
         self._suppress_release_click = True
 
-        y = self._event_tree_y(event)
         item = self._tree.identify_row(y)
+        if not item or item not in self._item_data:
+            return (COPY, DND_FILES, "")
         if item and item in self._item_data and item not in self._tree.selection():
             self._select_item(item)
             self._on_select()
@@ -866,6 +873,15 @@ class MainFrame(ttk.Frame):
         y_root = getattr(event, "y_root", None)
         if isinstance(y_root, int):
             return y_root - self._tree.winfo_rooty()
+        return 0
+
+    def _event_tree_x(self, event) -> int:
+        x = getattr(event, "x", None)
+        if isinstance(x, int):
+            return x
+        x_root = getattr(event, "x_root", None)
+        if isinstance(x_root, int):
+            return x_root - self._tree.winfo_rootx()
         return 0
 
     def _hover_drop_target_iid(self, event) -> str | None:
