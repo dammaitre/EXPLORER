@@ -167,6 +167,8 @@ python -m pyxplorer --verbose
   - In PDF panel: click-drag to select text or image region.
   - `Ctrl+C`: copy selected text to system clipboard.
   - `Ctrl+I`: copy selected region as an image to system clipboard (Windows only).
+	- `Ctrl+O`: OCR selected region and copy recognized text to system clipboard.
+		- Requires Tesseract OCR installed (`tesseract.exe` on PATH or `TESSERACT_CMD` environment variable).
 - `Ctrl+Alt+I`: show image panel and load selected image.
 - `Ctrl+Alt+T`: show terminal panel and restart terminal in current directory.
 - `Ctrl+Alt+N`: show temp notes panel and reset temp file.

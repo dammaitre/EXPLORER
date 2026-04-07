@@ -9,6 +9,7 @@ version = "0.1.0"
 dependencies = [
 	"Pillow",
 	"PyMuPDF",
+	"pytesseract",
 	"ptyprocess",
 	"tkinterdnd2",
 	"pywinpty; sys_platform == 'win32'",

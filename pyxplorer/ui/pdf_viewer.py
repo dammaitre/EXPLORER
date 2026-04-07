@@ -9,6 +9,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Any
 
+from ..core.ocr import extract_text_from_image, ocr_backend_status
 from ..core.longpath import normalize, to_display
 from ..logging import vprint
 from ..settings import THEME as _T, SCROLL_SPEED
@@ -127,6 +128,8 @@ class PDFViewer(ttk.Frame):
         self._canvas.bind("<Control-C>", lambda e: self.copy_selection() or "break")
         self._canvas.bind("<Control-i>", lambda e: self.copy_selection_image() or "break")
         self._canvas.bind("<Control-I>", lambda e: self.copy_selection_image() or "break")
+        self._canvas.bind("<Control-o>", lambda e: self.copy_selection_ocr_text() or "break")
+        self._canvas.bind("<Control-O>", lambda e: self.copy_selection_ocr_text() or "break")
         self._canvas.bind("<Configure>", self._on_canvas_configure)
 
     def focus_viewer(self) -> None:
@@ -249,6 +252,48 @@ class PDFViewer(ttk.Frame):
         except Exception as exc:
             vprint(f"Ctrl+I: Error during image capture: {exc}")
         return None
+
+    def copy_selection_ocr_text(self) -> str | None:
+        """Capture selection as image, OCR it, and copy text to clipboard."""
+        vprint("Ctrl+O: Attempting OCR capture...")
+        if self._doc is None or fitz is None or Image is None:
+            self._status_cb("Ctrl+O: Cannot OCR — PDF not loaded or dependencies missing")
+            return None
+
+        bbox = self._selection_bbox()
+        if bbox is None:
+            self._status_cb("Ctrl+O: No selection rectangle detected")
+            return None
+
+        ok, backend_message = ocr_backend_status()
+        if not ok:
+            self._status_cb(f"Ctrl+O: OCR unavailable — {backend_message}")
+            vprint(f"Ctrl+O: OCR unavailable — {backend_message}")
+            return None
+
+        try:
+            image = self._render_selection_image(bbox)
+            if image is None:
+                self._status_cb("Ctrl+O: Image rendering failed")
+                return None
+
+            self._status_cb("Ctrl+O: Running OCR on selection...")
+            text = extract_text_from_image(image)
+            if not text.strip():
+                self._status_cb("Ctrl+O: OCR returned no text")
+                return None
+
+            normalized = self._normalize_copied_text(text)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(normalized)
+            self.root.update_idletasks()
+            self._status_cb(f"Ctrl+O: OCR text copied to clipboard ({len(normalized)} chars)")
+            vprint(f"Ctrl+O: OCR text copied to clipboard ({len(normalized)} chars)")
+            return "break"
+        except Exception as exc:
+            self._status_cb(f"Ctrl+O: OCR failed — {exc}")
+            vprint(f"Ctrl+O: OCR failed — {exc}")
+            return None
 
     def _render_selection_image(self, bbox: tuple[float, float, float, float]) -> Any:
         """Render the selected region from PDF pages into a PIL Image."""

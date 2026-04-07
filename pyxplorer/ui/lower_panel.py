@@ -191,6 +191,11 @@ class LowerPanel(ttk.Frame):
         if self.active_tab == "pdf":
             self._pdf_viewer.copy_selection_image()
 
+    def copy_pdf_selection_ocr_text(self) -> None:
+        """Run OCR on PDF selection and copy recognized text (global Ctrl+O handler)."""
+        if self.active_tab == "pdf":
+            self._pdf_viewer.copy_selection_ocr_text()
+
 
     def shutdown(self) -> None:
         self._pdf_viewer.unload()
