@@ -3,12 +3,14 @@ import importlib
 import os
 import queue
 import re
+import sys
 import threading
 import tkinter as tk
 from tkinter import ttk
-from typing import Callable
+from typing import Callable, Any
 
 from ..core.longpath import normalize, to_display
+from ..logging import vprint
 from ..settings import THEME as _T, SCROLL_SPEED
 from .scroll_utils import make_autohide_pack_setter
 
@@ -123,6 +125,8 @@ class PDFViewer(ttk.Frame):
         self._canvas.bind("<Button-1>", lambda e: self._canvas.focus_set(), add=True)
         self._canvas.bind("<Control-c>", lambda e: self.copy_selection() or "break")
         self._canvas.bind("<Control-C>", lambda e: self.copy_selection() or "break")
+        self._canvas.bind("<Control-i>", lambda e: self.copy_selection_image() or "break")
+        self._canvas.bind("<Control-I>", lambda e: self.copy_selection_image() or "break")
         self._canvas.bind("<Configure>", self._on_canvas_configure)
 
     def focus_viewer(self) -> None:
@@ -219,6 +223,236 @@ class PDFViewer(ttk.Frame):
         self.root.clipboard_clear()
         self.root.clipboard_append(self._normalize_copied_text(self._selection_text))
         return "break"
+
+    def copy_selection_image(self) -> str | None:
+        """Capture selection as an image and push to Windows clipboard."""
+        vprint("Ctrl+I: Attempting image capture...")
+        if self._doc is None or fitz is None or Image is None:
+            vprint("Ctrl+I: Cannot capture — PDF not loaded or dependencies missing")
+            return None
+        bbox = self._selection_bbox()
+        if bbox is None:
+            vprint("Ctrl+I: No selection rectangle detected")
+            return None
+        vprint(f"Ctrl+I: Selection detected — rendering image...")
+        try:
+            image = self._render_selection_image(bbox)
+            if image is not None:
+                vprint("Ctrl+I: Image rendered — pushing to clipboard...")
+                copied = self._push_image_to_clipboard(image)
+                if copied:
+                    vprint("Ctrl+I: Image copied to clipboard!")
+                    return "break"
+                vprint("Ctrl+I: Clipboard copy failed")
+            else:
+                vprint("Ctrl+I: Image rendering returned None")
+        except Exception as exc:
+            vprint(f"Ctrl+I: Error during image capture: {exc}")
+        return None
+
+    def _render_selection_image(self, bbox: tuple[float, float, float, float]) -> Any:
+        """Render the selected region from PDF pages into a PIL Image."""
+        if self._doc is None or fitz is None or Image is None:
+            vprint("_render_selection_image: Dependencies missing")
+            return None
+        x1, y1, x2, y2 = bbox
+        width = int(round(x2 - x1))
+        height = int(round(y2 - y1))
+        vprint(f"_render_selection_image: Selection bbox {x1:.1f}, {y1:.1f}, {x2:.1f}, {y2:.1f}")
+        vprint(f"_render_selection_image: Selection size {width}x{height} px")
+        if width <= 0 or height <= 0:
+            vprint(f"_render_selection_image: Invalid dimensions")
+            return None
+
+        combined = Image.new("RGB", (width, height), color=(255, 255, 255))
+        vprint(f"_render_selection_image: Created blank canvas {width}x{height}")
+        pages_rendered = 0
+        for page_info in self._page_views:
+            px1 = page_info["x"]
+            py1 = page_info["y"]
+            px2 = px1 + page_info["render_width"]
+            py2 = py1 + page_info["render_height"]
+
+            ix1 = max(x1, px1)
+            iy1 = max(y1, py1)
+            ix2 = min(x2, px2)
+            iy2 = min(y2, py2)
+
+            if ix1 >= ix2 or iy1 >= iy2:
+                continue
+
+            try:
+                page = self._doc.load_page(page_info["index"])
+                clip_rect = fitz.Rect(
+                    (ix1 - px1) * page_info["page_width"] / page_info["render_width"],
+                    (iy1 - py1) * page_info["page_height"] / page_info["render_height"],
+                    (ix2 - px1) * page_info["page_width"] / page_info["render_width"],
+                    (iy2 - py1) * page_info["page_height"] / page_info["render_height"],
+                )
+                vprint(f"_render_selection_image: Page {page_info['index']} clip_rect {clip_rect}")
+                matrix = fitz.Matrix(self._zoom, self._zoom)
+                pix = page.get_pixmap(matrix=matrix, alpha=False, clip=clip_rect, annots=True)
+                vprint(f"_render_selection_image: Pixmap size {pix.width}x{pix.height}, stride {pix.stride}")
+                partial = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                paste_x = int(round(ix1 - x1))
+                paste_y = int(round(iy1 - y1))
+                vprint(f"_render_selection_image: Pasting at ({paste_x}, {paste_y})")
+                combined.paste(partial, (paste_x, paste_y))
+                pages_rendered += 1
+            except Exception as exc:
+                vprint(f"_render_selection_image: Error on page {page_info['index']}: {exc}")
+                continue
+            vprint(f"_render_selection_image: Rendered {pages_rendered} page region(s)")
+        return combined if pages_rendered > 0 else None
+
+    def _push_image_to_clipboard(self, image: Any) -> bool:
+        """Push a PIL Image to the Windows clipboard."""
+        if sys.platform != "win32":
+            vprint("_push_image_to_clipboard: Non-Windows platform, skipping clipboard push")
+            return False
+        from io import BytesIO
+        import struct
+        
+        vprint(f"_push_image_to_clipboard: Image mode={image.mode} size={image.size}")
+        vprint("_push_image_to_clipboard: Converting to BMP format...")
+        output = BytesIO()
+        image.convert("RGB").save(output, format="BMP")
+        bmp_data = output.getvalue()
+        vprint(f"_push_image_to_clipboard: BMP file size {len(bmp_data)} bytes")
+        
+        # Parse BMP header for validation
+        if len(bmp_data) >= 26:
+            width = struct.unpack('<I', bmp_data[18:22])[0]
+            height = struct.unpack('<I', bmp_data[22:26])[0]
+            vprint(f"_push_image_to_clipboard: BMP dimensions {width}x{height}")
+        
+        # Try win32clipboard first
+        try:
+            import win32clipboard
+            vprint("_push_image_to_clipboard: Using win32clipboard...")
+            vprint("_push_image_to_clipboard: Opening clipboard...")
+            win32clipboard.OpenClipboard()
+            try:
+                win32clipboard.EmptyClipboard()
+                # CF_DIB expects DIB format (bitmap header + pixel data, no file header)
+                # Skip BMP file header (14 bytes) to get DIB format
+                dib_data = bmp_data[14:]
+                vprint(f"_push_image_to_clipboard: DIB data size {len(dib_data)} bytes")
+                vprint(f"_push_image_to_clipboard: CF_DIB constant value = {win32clipboard.CF_DIB}")
+                
+                result = win32clipboard.SetClipboardData(win32clipboard.CF_DIB, dib_data)
+                vprint(f"_push_image_to_clipboard: SetClipboardData returned: {result}")
+                vprint("_push_image_to_clipboard: Successfully set clipboard data (CF_DIB format)")
+            finally:
+                win32clipboard.CloseClipboard()
+                vprint("_push_image_to_clipboard: Clipboard closed")
+            return True
+        except ImportError as e:
+            vprint(f"_push_image_to_clipboard: win32clipboard not available: {e}")
+            vprint("_push_image_to_clipboard: Falling back to ctypes clipboard method...")
+        except Exception as e:
+            vprint(f"_push_image_to_clipboard: win32clipboard error: {type(e).__name__}: {e}")
+            vprint("_push_image_to_clipboard: Falling back to ctypes clipboard method...")
+        
+        # Fallback: use ctypes to access Windows clipboard API directly
+        try:
+            import ctypes
+            from ctypes import wintypes
+            
+            vprint("_push_image_to_clipboard: Using ctypes Windows API...")
+            
+            # Windows clipboard format constants
+            CF_DIB = 8
+            GMEM_MOVEABLE = 0x0002
+            
+            # Convert BMP to DIB format (skip 14-byte file header)
+            dib_data = bmp_data[14:]
+            
+            # Allocate global memory
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+            GlobalAlloc = kernel32.GlobalAlloc
+            GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+            GlobalAlloc.restype = wintypes.HGLOBAL
+
+            GlobalLock = kernel32.GlobalLock
+            GlobalLock.argtypes = [wintypes.HGLOBAL]
+            GlobalLock.restype = ctypes.c_void_p
+
+            GlobalUnlock = kernel32.GlobalUnlock
+            GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+            GlobalUnlock.restype = wintypes.BOOL
+
+            GlobalFree = kernel32.GlobalFree
+            GlobalFree.argtypes = [wintypes.HGLOBAL]
+            GlobalFree.restype = wintypes.HGLOBAL
+
+            OpenClipboard = user32.OpenClipboard
+            OpenClipboard.argtypes = [wintypes.HWND]
+            OpenClipboard.restype = wintypes.BOOL
+
+            EmptyClipboard = user32.EmptyClipboard
+            EmptyClipboard.argtypes = []
+            EmptyClipboard.restype = wintypes.BOOL
+
+            SetClipboardData = user32.SetClipboardData
+            SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+            SetClipboardData.restype = wintypes.HANDLE
+
+            CloseClipboard = user32.CloseClipboard
+            CloseClipboard.argtypes = []
+            CloseClipboard.restype = wintypes.BOOL
+            
+            vprint("_push_image_to_clipboard: Allocating global memory...")
+            h_mem = GlobalAlloc(GMEM_MOVEABLE, len(dib_data))
+            if not h_mem:
+                err = ctypes.get_last_error()
+                raise RuntimeError(f"Failed to allocate global memory (GetLastError={err})")
+            
+            vprint(f"_push_image_to_clipboard: Allocated {len(dib_data)} bytes")
+            
+            # Lock and copy data
+            p_mem = GlobalLock(h_mem)
+            if not p_mem:
+                err = ctypes.get_last_error()
+                GlobalFree(h_mem)
+                raise RuntimeError(f"Failed to lock memory (GetLastError={err})")
+            
+            ctypes.memmove(p_mem, dib_data, len(dib_data))
+            GlobalUnlock(h_mem)
+            
+            vprint("_push_image_to_clipboard: Opening clipboard...")
+            if not OpenClipboard(None):
+                err = ctypes.get_last_error()
+                GlobalFree(h_mem)
+                raise RuntimeError(f"Failed to open clipboard (GetLastError={err})")
+            
+            try:
+                if not EmptyClipboard():
+                    err = ctypes.get_last_error()
+                    GlobalFree(h_mem)
+                    raise RuntimeError(f"Failed to empty clipboard (GetLastError={err})")
+                
+                vprint(f"_push_image_to_clipboard: Setting clipboard data with CF_DIB={CF_DIB}...")
+                result = SetClipboardData(CF_DIB, h_mem)
+                if not result:
+                    err = ctypes.get_last_error()
+                    GlobalFree(h_mem)
+                    raise RuntimeError(f"SetClipboardData returned NULL (GetLastError={err})")
+                
+                vprint("_push_image_to_clipboard: Successfully set clipboard data (ctypes/CF_DIB)")
+                return True
+            finally:
+                if not CloseClipboard():
+                    vprint("_push_image_to_clipboard: Warning - CloseClipboard failed")
+                else:
+                    vprint("_push_image_to_clipboard: Clipboard closed")
+        except Exception as e:
+            import traceback
+            vprint(f"_push_image_to_clipboard: ctypes error: {type(e).__name__}: {e}")
+            vprint(f"_push_image_to_clipboard: Traceback: {traceback.format_exc()}")
+            return False
 
     @staticmethod
     def _normalize_copied_text(text: str) -> str:

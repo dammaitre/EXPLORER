@@ -292,6 +292,7 @@ class App:
             open_image_cb=self.open_image_panel,
             cancel_image_load_cb=self.lower_panel.cancel_image_if_loading,
             lower_panel_focus_cb=self.lower_panel.contains_focus,
+            pdf_copy_image_cb=lambda: self.lower_panel.copy_pdf_selection_image(),
         )
         self.status_bar.set_status(_runtime_capabilities_message(self._dnd_enabled))
         self.root.protocol("WM_DELETE_WINDOW", self.close)

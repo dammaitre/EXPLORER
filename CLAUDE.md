@@ -317,6 +317,17 @@ Windows folder shortcuts (`.lnk`) that target directories are treated like direc
 | Double click on dir | Navigate main frame to that directory |
 | Middle click on dir | Open new Pyxplorer window at that directory |
 
+### PDF viewer (`Ctrl+Alt+P`)
+
+| Interaction | Action |
+|---|---|
+| Click-drag on page | Select text or image region (visual rectangle) |
+| `Ctrl+C` | Copy selected text to system clipboard |
+| `Ctrl+I` | Copy selected region as an image to Windows clipboard |
+| `Ctrl+Shift+MouseWheel` | Zoom in/out |
+| `Shift+MouseWheel` | Horizontal scroll |
+| `MouseWheel` | Vertical scroll |
+
 ### Search dialog (`Ctrl+F`)
 
 Results are displayed in a table with columns:

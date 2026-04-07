@@ -278,6 +278,7 @@ def bind_keys(
     open_image_cb=None,
     cancel_image_load_cb=None,
     lower_panel_focus_cb=None,
+    pdf_copy_image_cb=None,
 ) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
@@ -380,6 +381,12 @@ def bind_keys(
     if open_pdf_cb is not None:
         root.bind("<Control-Alt-p>", lambda e: open_pdf_cb())
         root.bind("<Control-Alt-P>", lambda e: open_pdf_cb())
+
+    # ── PDF viewer: copy selection as image (Ctrl+I) ──────────────────
+    if pdf_copy_image_cb is not None:
+        root.bind("<Control-i>", lambda e: pdf_copy_image_cb() or "break")
+        root.bind("<Control-I>", lambda e: pdf_copy_image_cb() or "break")
+
 
     # ── Lower terminal (Ctrl+Alt+T) ──────────────────────────────────
     if open_terminal_cb is not None:

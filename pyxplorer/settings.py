@@ -5,6 +5,7 @@ All other modules import from here; never hardcode palette values elsewhere.
 import json
 import os
 from pathlib import Path
+from .logging import vprint
 
 _SETTINGS_FILE = Path(__file__).parent / "settings.json"
 
@@ -42,7 +43,7 @@ def _load() -> dict:
     except FileNotFoundError:
         raw = {}
     except json.JSONDecodeError as exc:
-        print(f"[settings] Invalid JSON in settings.json: {exc}. Using defaults.")
+        vprint(f"[settings] Invalid JSON in settings.json: {exc}. Using defaults.")
         raw = {}
 
     theme = {**_DEFAULTS["theme"], **raw.get("theme", {})}

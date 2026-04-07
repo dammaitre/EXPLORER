@@ -186,6 +186,12 @@ class LowerPanel(ttk.Frame):
             return True
         return False
 
+    def copy_pdf_selection_image(self) -> None:
+        """Copy the PDF selection as an image to clipboard (global Ctrl+I handler)."""
+        if self.active_tab == "pdf":
+            self._pdf_viewer.copy_selection_image()
+
+
     def shutdown(self) -> None:
         self._pdf_viewer.unload()
         self._image_viewer.unload()

@@ -141,6 +141,16 @@ pyxplorer
 python -m pyxplorer
 ```
 
+To enable verbose terminal debugging logs:
+
+```powershell
+pyxplorer --verbose
+```
+
+```powershell
+python -m pyxplorer --verbose
+```
+
 ## Keyboard shortcuts
 
 - `Ctrl+C`: copy selected items into the app clipboard.
@@ -154,6 +164,9 @@ python -m pyxplorer
 - `Ctrl+R`: open the run dialog.
 - `Ctrl+F`: open regex search dialog (results show file name and parent directory path).
 - `Ctrl+Alt+P`: show PDF panel and load selected PDF.
+  - In PDF panel: click-drag to select text or image region.
+  - `Ctrl+C`: copy selected text to system clipboard.
+  - `Ctrl+I`: copy selected region as an image to system clipboard (Windows only).
 - `Ctrl+Alt+I`: show image panel and load selected image.
 - `Ctrl+Alt+T`: show terminal panel and restart terminal in current directory.
 - `Ctrl+Alt+N`: show temp notes panel and reset temp file.
