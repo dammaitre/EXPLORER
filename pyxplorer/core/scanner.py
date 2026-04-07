@@ -66,8 +66,12 @@ def _is_scan_skipped(path: str) -> bool:
             return True
         # candidate is a parent of root: skip
         # (e.g., if root is "A:\B\C" and candidate is "A:\B", skip candidate)
-        if root.startswith(candidate + os.sep):
-            return True
+        try:
+            if os.path.commonpath([candidate, root]) == candidate:
+                return True
+        except ValueError:
+            # Different drives or otherwise incomparable paths: not a match.
+            continue
     return False
 
 

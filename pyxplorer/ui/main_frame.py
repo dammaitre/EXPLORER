@@ -75,6 +75,7 @@ class MainFrame(ttk.Frame):
         self._drop_hover_iid: str | None = None
         self._alt_drag_intent: bool = False
         self._suppress_release_click: bool = False
+        self._folder_shortcut_cache: dict[str, str | None] = {}
 
         self._build()
 
@@ -518,10 +519,12 @@ class MainFrame(ttk.Frame):
         if event.state & 0x4 or event.state & 0x1:
             return
         row = self._item_data.get(item)
-        if row and row["is_dir"]:
-            self.navigate_cb(row["path"])
-        elif row and not row["is_dir"]:
-            self._open_file(row["path"])
+        if row:
+            target = self._resolve_directory_target(row)
+            if target:
+                self.navigate_cb(target)
+            elif not row["is_dir"]:
+                self._open_file(row["path"])
         self._alt_drag_intent = False
 
     def _on_select(self, event=None) -> None:
@@ -662,8 +665,10 @@ class MainFrame(ttk.Frame):
         sel = self._tree.selection()
         if sel:
             row = self._item_data.get(sel[0])
-            if row and row["is_dir"]:
-                self.navigate_cb(row["path"])
+            if row:
+                target = self._resolve_directory_target(row)
+                if target:
+                    self.navigate_cb(target)
         return "break"
 
     def _on_return_key(self, event=None) -> str:
@@ -672,11 +677,58 @@ class MainFrame(ttk.Frame):
         if sel:
             row = self._item_data.get(sel[0])
             if row:
-                if row["is_dir"]:
-                    self.navigate_cb(row["path"])
+                target = self._resolve_directory_target(row)
+                if target:
+                    self.navigate_cb(target)
                 else:
                     self._open_file(row["path"])
         return "break"
+
+    def _resolve_directory_target(self, row: dict) -> str | None:
+        if row.get("is_dir"):
+            return row.get("path")
+        path = row.get("path")
+        if not isinstance(path, str):
+            return None
+        return self._resolve_folder_shortcut(path)
+
+    def _resolve_folder_shortcut(self, path: str) -> str | None:
+        if sys.platform != "win32":
+            return None
+        if os.path.splitext(path)[1].lower() != ".lnk":
+            return None
+
+        key = os.path.normcase(normalize(path))
+        if key in self._folder_shortcut_cache:
+            return self._folder_shortcut_cache[key]
+
+        escaped = to_display(path).replace("'", "''")
+        command = (
+            "$s=(New-Object -ComObject WScript.Shell).CreateShortcut(" 
+            f"'{escaped}');"
+            "$p=$s.TargetPath;"
+            "if ($p) { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Write-Output $p }"
+        )
+        kwargs: dict = {
+            "capture_output": True,
+            "text": True,
+            "check": False,
+        }
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        try:
+            proc = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", command],
+                **kwargs,
+            )
+            target = proc.stdout.strip()
+            if target and os.path.isdir(normalize(target)):
+                self._folder_shortcut_cache[key] = target
+                return target
+        except Exception:
+            pass
+        self._folder_shortcut_cache[key] = None
+        return None
 
     def _open_file(self, path: str) -> None:
         """Open a file with the OS default application (like double-clicking in Explorer)."""
@@ -698,9 +750,12 @@ class MainFrame(ttk.Frame):
         if not item:
             return
         row = self._item_data.get(item)
-        if not (row and row["is_dir"]):
+        if not row:
             return
-        target = to_display(row["path"])
+        target = self._resolve_directory_target(row)
+        if not target:
+            return
+        target = to_display(target)
         kwargs: dict = {}
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW

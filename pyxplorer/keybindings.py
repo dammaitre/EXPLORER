@@ -242,6 +242,7 @@ def bind_keys(
     cancel_pdf_load_cb=None,
     open_image_cb=None,
     cancel_image_load_cb=None,
+    lower_panel_focus_cb=None,
 ) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
@@ -441,12 +442,21 @@ def bind_keys(
         def _wrapped(e=None):
             if _in_entry(root):
                 return None
+            if lower_panel_focus_cb is not None and lower_panel_focus_cb():
+                return "break"
             main_frame._tree.focus_set()
             return fn()
         return _wrapped
 
-    root.bind("<Left>",      _focus_main_and_run(main_frame._go_up))
-    root.bind("<Right>",     _focus_main_and_run(main_frame._open_selected))
-    root.bind("<Up>",        _focus_main_and_run(main_frame._on_up))
-    root.bind("<Down>",      _focus_main_and_run(main_frame._on_down))
+    def _run_main_navigation_without_focus(fn):
+        def _wrapped(e=None):
+            if _in_entry(root):
+                return None
+            return fn()
+        return _wrapped
+
+    root.bind("<Left>",      _run_main_navigation_without_focus(main_frame._go_up))
+    root.bind("<Right>",     _run_main_navigation_without_focus(main_frame._open_selected))
+    root.bind("<Up>",        _run_main_navigation_without_focus(main_frame._on_up))
+    root.bind("<Down>",      _run_main_navigation_without_focus(main_frame._on_down))
     root.bind("<BackSpace>", _focus_main_and_run(main_frame._go_up))

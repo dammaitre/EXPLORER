@@ -2,6 +2,7 @@ import io
 import importlib
 import os
 import queue
+import re
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -216,8 +217,25 @@ class PDFViewer(ttk.Frame):
         if not self._selection_text:
             return None
         self.root.clipboard_clear()
-        self.root.clipboard_append(self._selection_text)
+        self.root.clipboard_append(self._normalize_copied_text(self._selection_text))
         return "break"
+
+    @staticmethod
+    def _normalize_copied_text(text: str) -> str:
+        """Remove PDF line-wrap breaks while preserving paragraph breaks."""
+        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+        normalized = re.sub(r"-\n(?=\w)", "", normalized)
+
+        paragraphs = re.split(r"\n\s*\n", normalized)
+        cleaned: list[str] = []
+        for paragraph in paragraphs:
+            stripped = paragraph.strip()
+            if not stripped:
+                continue
+            single_line = re.sub(r"\s*\n\s*", " ", stripped)
+            single_line = re.sub(r"[ \t]+", " ", single_line).strip()
+            cleaned.append(single_line)
+        return "\n\n".join(cleaned)
 
     def _ensure_queue_pump(self) -> None:
         if self._pump_after is None:
@@ -386,9 +404,9 @@ class PDFViewer(ttk.Frame):
     def _on_press(self, event: tk.Event) -> None:
         if self._doc is None:
             return
+        self._clear_selection()
         self._drag_anchor = (self._canvas.canvasx(event.x), self._canvas.canvasy(event.y))
         self._drag_current = self._drag_anchor
-        self._clear_selection()
 
     def _on_drag(self, event: tk.Event) -> None:
         if self._drag_anchor is None:

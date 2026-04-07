@@ -290,6 +290,7 @@ class App:
             cancel_pdf_load_cb=self.lower_panel.cancel_pdf_if_loading,
             open_image_cb=self.open_image_panel,
             cancel_image_load_cb=self.lower_panel.cancel_image_if_loading,
+            lower_panel_focus_cb=self.lower_panel.contains_focus,
         )
         self.status_bar.set_status(_runtime_capabilities_message(self._dnd_enabled))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -530,9 +531,14 @@ class App:
         self.main_frame.load_dir(norm)
         self.left_panel.load_dir(norm)
 
-        # Check if current directory is in scan_skip_dirs
-        if _is_scan_skipped(norm):
+        skip_scan = _is_scan_skipped(norm)
+        if skip_scan:
+            n = self.main_frame.get_item_count()
+            total = self.main_frame.get_total_size()
+            self.main_frame.finalize_pct()
+            self.status_bar.stop_scanning(n, total)
             self.status_bar.set_skip_message()
+            return
 
         dirs = self.main_frame.get_subdir_paths()
         if dirs:

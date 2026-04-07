@@ -114,6 +114,19 @@ class LowerPanel(ttk.Frame):
         elif self.active_tab == "image":
             self._image_viewer.focus_viewer()
 
+    def contains_focus(self) -> bool:
+        """True when keyboard focus is currently inside the lower panel."""
+        try:
+            focused = self.root.focus_get()
+        except Exception:
+            focused = None
+        if focused is None:
+            return False
+        try:
+            return str(focused).startswith(str(self))
+        except Exception:
+            return False
+
     def request_pdf(self) -> None:
         self.show_tab("pdf")
         paths = list(self.state.selection)

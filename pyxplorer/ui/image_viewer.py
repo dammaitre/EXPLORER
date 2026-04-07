@@ -12,7 +12,10 @@ Features:
 
 from __future__ import annotations
 
+import ctypes
+import io
 import os
+import sys
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -44,6 +47,11 @@ _ZOOM_MAX     = 8.0
 _ZOOM_STEP    = 1.15
 _DEFAULT_ZOOM = 1.0
 _SCROLL_SPEED = SCROLL_SPEED
+
+_CF_DIB = 8
+_GMEM_MOVEABLE = 0x0002
+_GMEM_ZEROINIT = 0x0040
+_GHND = _GMEM_MOVEABLE | _GMEM_ZEROINIT
 
 # Extensions this viewer will accept
 _IMAGE_EXTS = {
@@ -115,6 +123,8 @@ class ImageViewer(ttk.Frame):
         self._canvas.bind("<Control-MouseWheel>", self._on_ctrl_wheel)
         self._canvas.bind("<Button-1>",
                           lambda e: self._canvas.focus_set())
+        self._canvas.bind("<Control-c>", self._on_copy_image)
+        self._canvas.bind("<Control-C>", self._on_copy_image)
         self._canvas.bind("<Configure>",          self._on_canvas_configure)
 
     # ------------------------------------------------------------------
@@ -126,6 +136,66 @@ class ImageViewer(ttk.Frame):
 
     def show_message(self, message: str) -> None:
         self._message_var.set(message)
+
+    def copy_image_to_clipboard(self) -> bool:
+        """Copy the currently loaded thumbnail image to Windows clipboard."""
+        if self._thumbnail is None:
+            self._status_cb("Copy skipped: no image loaded")
+            return False
+        if sys.platform != "win32":
+            self._status_cb("Copy image to clipboard is only available on Windows")
+            return False
+
+        try:
+            image_for_clipboard = self._thumbnail
+            if image_for_clipboard.mode not in ("RGB", "RGBA"):
+                image_for_clipboard = image_for_clipboard.convert("RGBA")
+            if image_for_clipboard.mode == "RGBA":
+                image_for_clipboard = image_for_clipboard.convert("RGB")
+
+            bmp_io = io.BytesIO()
+            image_for_clipboard.save(bmp_io, format="BMP")
+            bmp_data = bmp_io.getvalue()
+            if len(bmp_data) <= 14:
+                raise ValueError("Invalid BMP data generated")
+
+            dib_data = bmp_data[14:]
+            data_len = len(dib_data)
+
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+
+            if not user32.OpenClipboard(None):
+                raise OSError("OpenClipboard failed")
+            try:
+                if not user32.EmptyClipboard():
+                    raise OSError("EmptyClipboard failed")
+
+                h_global = kernel32.GlobalAlloc(_GHND, data_len)
+                if not h_global:
+                    raise MemoryError("GlobalAlloc failed")
+
+                ptr = kernel32.GlobalLock(h_global)
+                if not ptr:
+                    kernel32.GlobalFree(h_global)
+                    raise MemoryError("GlobalLock failed")
+
+                try:
+                    ctypes.memmove(ptr, dib_data, data_len)
+                finally:
+                    kernel32.GlobalUnlock(h_global)
+
+                if not user32.SetClipboardData(_CF_DIB, h_global):
+                    kernel32.GlobalFree(h_global)
+                    raise OSError("SetClipboardData failed")
+            finally:
+                user32.CloseClipboard()
+
+            self._status_cb("Image copied to clipboard")
+            return True
+        except Exception as exc:
+            self._status_cb(f"Image copy failed: {exc}")
+            return False
 
     @property
     def is_loading(self) -> bool:
@@ -296,4 +366,8 @@ class ImageViewer(ttk.Frame):
             f"{os.path.basename(to_display(self._path or ''))}  —  "
             f"{pct}% zoom  (Ctrl+scroll to zoom)"
         )
+        return "break"
+
+    def _on_copy_image(self, event: tk.Event | None = None) -> str:
+        self.copy_image_to_clipboard()
         return "break"
