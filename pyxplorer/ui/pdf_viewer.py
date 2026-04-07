@@ -222,6 +222,8 @@ class PDFViewer(ttk.Frame):
 
     def copy_selection(self) -> str | None:
         if not self._selection_text:
+            if self._selection_bbox() is not None:
+                self._status_cb("Ctrl+C: No text detected in selection — you might want to consider OCR (Ctrl+O)")
             return None
         self.root.clipboard_clear()
         self.root.clipboard_append(self._normalize_copied_text(self._selection_text))
