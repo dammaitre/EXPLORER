@@ -33,7 +33,7 @@ pyxplorer/
 ├── main.py              # Entry point: argparse PATH argument, calls App(start_path).run()
 ├── app.py               # Root Tk window, ttk styling, layout, navigation controller
 ├── settings.json        # All theme colours, start_dirs, ext_skipped (edit this, not settings.py)
-├── settings.py          # Loads settings.json, exports THEME / START_DIRS / EXT_SKIPPED
+├── settings.py          # Loads settings.json, exports THEME / START_DIRS / SCAN_SKIP_DIRS / EXT_SKIPPED
 ├── state.py             # AppState: current_dir, nav_history, clipboard, selection
 ├── keybindings.py       # Global shortcuts (clipboard, lower panel, heuristics, navigation)
 ├── core/
@@ -47,8 +47,9 @@ pyxplorer/
     ├── top_bar.py       # Path entry, 10-item history dropdown, breadcrumbs, Ctrl+R
     ├── left_panel.py    # Lazy-loading directory tree (Nav.Treeview style)
   ├── main_frame.py    # Directory listing: Name / [Heuristic] / Size / % columns
-  ├── lower_panel.py   # VSCode-style lower pane coordinator (P/T/N)
-  ├── pdf_viewer.py    # PDF viewer tab (async page render, zoom, text selection)
+  ├── lower_panel.py   # VSCode-style lower pane coordinator (P/T/N/I)
+  ├── pdf_viewer.py    # PDF viewer tab (async page render, zoom, text selection/copy)
+  ├── image_viewer.py  # Image viewer tab (async load, 1024px cap, zoom/pan, Ctrl+C image copy)
   ├── embedded_terminal.py # Embedded terminal tab (PowerShell on Win, shell fallback elsewhere)
   ├── temp_notepad.py  # Temp notes tab (per-user app data dir)
   ├── heuristics_window.py # Ctrl+H script picker window
@@ -106,6 +107,18 @@ Long operations (paste, heuristics execution) must stay off the main thread and 
 ### 6. Extension filtering applies everywhere
 
 `EXT_SKIPPED` (from `settings.py`) must be checked in both the scanner (`_dir_size`) and the main frame listing (`load_dir`). Files matching skipped extensions must be invisible in the UI and excluded from all size computations.
+
+### 7. `scan_skip_dirs` controls where scans can start
+
+`SCAN_SKIP_DIRS` (from `settings.py`) is interpreted with inverse/prefix semantics:
+- If current path equals a configured entry → scan is skipped.
+- If current path is a parent of a configured entry → scan is skipped.
+- If current path is a child of a configured entry → scan is allowed.
+
+Example: with `A\B` configured:
+- `A\B` skipped
+- `A\` skipped
+- `A\B\C` scanned
 
 ---
 
@@ -174,9 +187,10 @@ Clipboard/file-operation shortcuts are wrapped in `_guard()` to avoid conflicts 
 
 `Ctrl+V` resolves clipboard from this shared file first, then local in-memory fallback.
 
-### Lower panel semantics (`Ctrl+Alt+P/T/N`)
+### Lower panel semantics (`Ctrl+Alt+P/T/N/I`)
 
 - `P` (PDF): load selected PDF into viewer
+- `I` (Image): load selected image into viewer (thumbnail capped to 1024 px on longest side)
 - `T` (Terminal): restart embedded terminal at current directory (`powershell.exe` on Windows, `$SHELL`/`bash` elsewhere)
 - `N` (Notes): reset `Pyxplorer/temp.txt` in app data directory
 - `Escape`: hide lower panel only (no kill)
@@ -222,6 +236,9 @@ Clipboard/file-operation shortcuts are wrapped in `_guard()` to avoid conflicts 
     "R:\\P013926_OTI_CDGX\\",
     "~",
     "D:\\"
+  ],
+  "scan_skip_dirs": [              // scan starts are blocked on these paths and their parents
+    "C:\\Windows\\"
   ],
   "ext_skipped": [".db"]           // extensions hidden from listing AND excluded from sizes
 }
@@ -274,6 +291,7 @@ Clipboard/file-operation shortcuts are wrapped in `_guard()` to avoid conflicts 
 | `Ctrl+R` | Open run dialog (Win+R style) |
 | `Ctrl+F` | Open regex search dialog |
 | `Ctrl+Alt+P` | Show PDF tab and load selected PDF |
+| `Ctrl+Alt+I` | Show Image tab and load selected image |
 | `Ctrl+Alt+T` | Show Terminal tab and reload PowerShell |
 | `Ctrl+Alt+N` | Show Notes tab and reset temp file |
 | `Ctrl+H` | Toggle heuristics window |
@@ -288,6 +306,8 @@ Clipboard/file-operation shortcuts are wrapped in `_guard()` to avoid conflicts 
 | Left click on file | Open with OS default app |
 | Left click on dir | Navigate into directory |
 | Middle click on dir | Open new Pyxplorer window at that directory |
+
+Windows folder shortcuts (`.lnk`) that target directories are treated like directories for `→`, `Enter`, click-open, and middle-click new-window.
 
 ### Left panel
 
@@ -325,7 +345,7 @@ Results are displayed in a table with columns:
 | 5 | Async size scanner + status bar | ✓ |
 | 6 | Keyboard shortcuts + file ops | ✓ |
 | 7 | Ctrl+F regex search dialog | ✓ |
-| 8 | Lower panel (`P/T/N`) + lifecycle semantics | ✓ |
-| 9 | Embedded terminal + temp notes + PDF viewer | ✓ |
+| 8 | Lower panel (`P/T/N/I`) + lifecycle semantics | ✓ |
+| 9 | Embedded terminal + temp notes + PDF + image viewer | ✓ |
 | 10 | Shared clipboard + async paste + robocopy conflict fallback | ✓ |
 | 11 | Heuristics window + dynamic result column | ✓ |

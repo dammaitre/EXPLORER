@@ -2,7 +2,7 @@
 
 Win11's file explorer copy but damien-friendly
 
-`EXPLORER` is a desktop file explorer prototype built with `tkinter` and `ttk`. It keeps familiar Explorer flows while adding keyboard-first navigation, background folder-size scanning, and a VS Code-style lower panel for PDF, terminal, and temp notes workflows.
+`EXPLORER` is a desktop file explorer prototype built with `tkinter` and `ttk`. It keeps familiar Explorer flows while adding keyboard-first navigation, background folder-size scanning, and a VS Code-style lower panel for PDF, image, terminal, and temp notes workflows.
 
 ## Current state
 
@@ -21,15 +21,17 @@ The app is currently organized as a desktop GUI package with a main application 
 - **Main file view:** directory and file listing with sortable `Name`, `Size`, and `%` columns, plus dynamic heuristic column support.
 - **Async folder size scanning:** subdirectory sizes are scanned in the background and reflected in the UI when ready.
 - **Status bar feedback:** spinner during scans plus operation messages (scan, paste, heuristics, lower-panel actions).
-- **Lower panel (`P/T/N`):** resizable bottom panel with:
-	- `P`: lightweight PDF viewer (async page load, zoom, text copy)
+- **Lower panel (`P/T/N/I`):** resizable bottom panel with:
+	- `P`: lightweight PDF viewer (async page load, zoom, text selection/copy with line-wrap cleanup)
 	- `T`: embedded terminal (`PowerShell` on Windows, `$SHELL`/`bash` fallback on Linux/macOS)
 	- `N`: temp UTF-8 notepad backed by a per-user data file (`Pyxplorer/temp.txt`)
+	- `I`: image viewer (async load, capped to 1024 px on longest side, scroll + zoom, copy image to Windows clipboard)
 - **Shared file clipboard across instances:** `Ctrl+C/X/V` uses a per-user data file (`Pyxplorer/clipboard.json`) for cross-window copy/cut/paste.
 - **Cross-instance drag & drop (Phase 2):** dropping files/folders onto the main list is supported, and dragging selected items from one `pyxplorer` window to another is enabled when `tkinterdnd2` is available.
 - **Async paste:** copy/move operations are non-blocking and report progress in the status bar (`robocopy` on Windows, `shutil` fallback elsewhere).
 - **Heuristics window (`Ctrl+H`):** runs scripts from the per-user scripts directory (`Pyxplorer/scripts`) over current directory children and displays results in a dynamic column.
 - **New-window workflows:** middle-click directories in left/main panels to open new windows, plus `Ctrl+N` for opening current directory in another window.
+- **Folder `.lnk` handling (Windows):** shortcuts targeting directories behave like child folders for navigation (open with `Right`/`Enter`/click and middle-click new-window).
 - **Windows long-path support:** internal path normalization plus an attempt to enable the Windows long-path registry flag (Windows only).
 - **Theme configuration:** colors, fonts, row heights, and optional start directories are loaded from `pyxplorer/settings.json`.
 
@@ -58,6 +60,7 @@ EXPLORER/
 │   └── ui/
 │       ├── embedded_terminal.py
 │       ├── heuristics_window.py
+│       ├── image_viewer.py
 │       ├── lower_panel.py
 │       ├── left_panel.py
 │       ├── main_frame.py
@@ -104,8 +107,9 @@ Load user-adjustable theme and startup directory settings.
 - `top_bar.py`: path entry, breadcrumbs, history dropdown, and run dialog.
 - `left_panel.py`: lazy-loading tree navigation.
 - `main_frame.py`: main directory listing, sorting, selection tracking, incremental loading, and dynamic heuristic column.
-- `lower_panel.py`: bottom panel coordinator (`P/T/N`).
+- `lower_panel.py`: bottom panel coordinator (`P/T/N/I`).
 - `pdf_viewer.py`: async PDF rendering with zoom and text selection/copy.
+- `image_viewer.py`: async image loading, zoom/pan, and clipboard-copy support.
 - `embedded_terminal.py`: embedded terminal view (PowerShell/PTY backend on Windows, ptyprocess shell fallback on Linux/macOS).
 - `temp_notepad.py`: temporary text editor tied to a per-user data file.
 - `heuristics_window.py`: script selector window for `Ctrl+H` workflow.
@@ -149,6 +153,7 @@ python -m pyxplorer
 - `Ctrl+R`: open the run dialog.
 - `Ctrl+F`: open regex search dialog (results show file name and parent directory path).
 - `Ctrl+Alt+P`: show PDF panel and load selected PDF.
+- `Ctrl+Alt+I`: show image panel and load selected image.
 - `Ctrl+Alt+T`: show terminal panel and restart terminal in current directory.
 - `Ctrl+Alt+N`: show temp notes panel and reset temp file.
 - `Ctrl+H`: toggle heuristics window.
@@ -189,5 +194,11 @@ Pyxplorer stores clipboard, heuristics scripts, starred entries, and temp notes 
 - fonts and font sizes
 - row heights
 - optional `start_dirs` for the left panel root nodes
+- `scan_skip_dirs` for directory-size scan suppression
+
+`scan_skip_dirs` semantics:
+
+- if `A\B` is configured, scans are skipped for `A\B` and all its parent directories (`A\`, drive root, etc.)
+- scans still run inside `A\B\...` children
 
 If `settings.json` is missing or invalid, defaults from `pyxplorer/settings.py` are used.
