@@ -71,6 +71,7 @@ class SearchDialog:
         # Search scope: "current" (default) | "selected" | "original"
         self._search_scope = tk.StringVar(value="current")
         self._current_search_root = self._original_dir  # Default to original dir at start
+        self._limit_results_var = tk.BooleanVar(value=True)
 
         self._build()
 
@@ -141,6 +142,13 @@ class SearchDialog:
                 value=value,
                 command=self._on_scope_changed,
             ).pack(side=tk.LEFT, padx=2)
+
+        ttk.Checkbutton(
+            scope_row,
+            text="Only show first 50 results",
+            variable=self._limit_results_var,
+            command=self._on_scope_changed,
+        ).pack(side=tk.LEFT, padx=(12, 0))
 
         # ── Status bar ───────────────────────────────────────────────────
         self._status_var = tk.StringVar(value="Type a regex pattern…")
@@ -258,6 +266,8 @@ class SearchDialog:
         else:  # "current"
             search_root = normalize(self._state.current_dir)
 
+        max_results = 50 if bool(self._limit_results_var.get()) else None
+
         # Validate regex before launching thread
         try:
             re.compile(pattern, re.IGNORECASE)
@@ -295,7 +305,7 @@ class SearchDialog:
 
         threading.Thread(
             target=search_names,
-            args=(search_root, pattern, self._queue, self._token),
+            args=(search_root, pattern, self._queue, self._token, max_results),
             daemon=True,
         ).start()
 
@@ -371,10 +381,15 @@ class SearchDialog:
                     )
 
                 elif kind == "search_done":
+                    truncated = bool(msg[1]) if len(msg) > 1 else False
                     n = len(self._tree.get_children())
-                    self._status_var.set(
-                        f"{n} result(s) found." if n else "No results."
-                    )
+                    if n:
+                        if truncated:
+                            self._status_var.set(f"Showing first {n} result(s) (limit reached).")
+                        else:
+                            self._status_var.set(f"{n} result(s) found.")
+                    else:
+                        self._status_var.set("No results.")
                     self._token = None
 
                 elif kind == "search_error":
