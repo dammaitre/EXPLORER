@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from .appdirs import pyxplorer_data_dir
+from .user_files import starred_json_path
 
 
 _CACHE: dict[str, str] | None = None
@@ -22,7 +22,7 @@ _CACHE_MTIME_NS: int | None = None
 
 
 def _store_path() -> Path:
-    return pyxplorer_data_dir() / "starred.json"
+    return starred_json_path()
 
 
 def _restore_leaf_case(path: str) -> str:

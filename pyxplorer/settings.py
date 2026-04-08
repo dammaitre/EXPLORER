@@ -1,13 +1,14 @@
 """
-settings.py — loads settings.json and exposes THEME and START_DIRS.
+settings.py — loads per-user settings.json and exposes THEME and START_DIRS.
 All other modules import from here; never hardcode palette values elsewhere.
 """
 import json
 import os
-from pathlib import Path
+from .core.user_files import ensure_user_json_files, settings_json_path
 from .logging import vprint
 
-_SETTINGS_FILE = Path(__file__).parent / "settings.json"
+ensure_user_json_files()
+_SETTINGS_FILE = settings_json_path()
 
 _DEFAULTS: dict = {
     "ext_skipped": [],

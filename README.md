@@ -33,7 +33,7 @@ The app is currently organized as a desktop GUI package with a main application 
 - **New-window workflows:** middle-click directories in left/main panels to open new windows, plus `Ctrl+N` for opening current directory in another window.
 - **Folder `.lnk` handling (Windows):** shortcuts targeting directories behave like child folders for navigation (open with `Right`/`Enter`/click and middle-click new-window).
 - **Windows long-path support:** internal path normalization plus an attempt to enable the Windows long-path registry flag (Windows only).
-- **Theme configuration:** colors, fonts, row heights, and optional start directories are loaded from `pyxplorer/settings.json`.
+- **Theme configuration:** colors, fonts, row heights, and optional start directories are loaded from per-user `%LOCALAPPDATA%\Pyxplorer\settings.json` (Windows equivalent on Linux/macOS).
 
 ## Project layout
 
@@ -47,7 +47,6 @@ EXPLORER/
 │   ├── app.py
 │   ├── keybindings.py
 │   ├── main.py
-│   ├── settings.json
 │   ├── settings.py
 │   ├── state.py
 │   ├── core/
@@ -89,9 +88,9 @@ Stores navigation history, current directory, clipboard state, and current selec
 
 Defines app-wide shortcuts and file operations: async paste with status updates, shared clipboard, lower-panel toggles, heuristics window toggle, and navigation/new-window flows.
 
-### `pyxplorer/settings.py` and `pyxplorer/settings.json`
+### `pyxplorer/settings.py`
 
-Load user-adjustable theme and startup directory settings.
+Load user-adjustable theme and startup directory settings from per-user app data.
 
 ### `pyxplorer/core/`
 
@@ -159,6 +158,7 @@ python -m pyxplorer --verbose
 - `Ctrl+Shift+C`: copy current path or selected paths to the system clipboard.
 - `Ctrl+Shift+N`: copy selected item name(s) to the system clipboard.
 - `Ctrl+Shift+X`: create a new folder.
+- `Ctrl+T`: set/clear a tag on selected item(s); tagged rows show `aka <tag>`.
 - `Ctrl+N`: open current directory in a new window.
 - `Delete`: permanently delete the selected items.
 - `Ctrl+R`: open the run dialog.
@@ -202,9 +202,11 @@ Pyxplorer stores clipboard, heuristics scripts, starred entries, and temp notes 
 - **Linux:** `${XDG_DATA_HOME:-~/.local/share}/Pyxplorer`
 - **macOS:** `~/Library/Application Support/Pyxplorer`
 
+Tag assignments are persisted in this same folder as `tags.json` and cached in memory at runtime.
+
 ## Configuration
 
-`pyxplorer/settings.json` can override:
+Per-user `settings.json` (stored under the Pyxplorer app-data directory) can override:
 
 - theme colors
 - fonts and font sizes
@@ -218,4 +220,5 @@ Pyxplorer stores clipboard, heuristics scripts, starred entries, and temp notes 
 - if `A\B` is configured, scans are skipped for `A\B` and all its parent directories (`A\`, drive root, etc.)
 - scans still run inside `A\B\...` children
 
-If `settings.json` is missing or invalid, defaults from `pyxplorer/settings.py` are used.
+On startup, missing user files are created automatically (`settings.json`, `clipboard.json`, `starred.json`, `tags.json`).
+If `settings.json` is invalid, defaults from `pyxplorer/settings.py` are used.

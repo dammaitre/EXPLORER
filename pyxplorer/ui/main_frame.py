@@ -15,6 +15,7 @@ from urllib.parse import unquote, urlparse
 from ..core.longpath import normalize, to_display
 from ..core.fs import fmt_size, copy_items, move_items
 from ..core import starred as _starred
+from ..core import tags as _tags
 from ..settings import THEME as _T, EXT_SKIPPED, SCROLL_SPEED
 from .scroll_utils import make_autohide_pack_setter
 
@@ -86,13 +87,14 @@ class MainFrame(ttk.Frame):
     def _build(self) -> None:
         self._tree = ttk.Treeview(
             self,
-            columns=("star", "heur", "size", "pct"),
+            columns=("aka", "star", "heur", "size", "pct"),
             selectmode="extended",
         )
 
         # ── Headings ──────────────────────────────────────────────────
         self._tree.heading("#0",    text="Name",  anchor="w",
                            command=lambda: self._sort_by("name"))
+        self._tree.heading("aka",   text="",      anchor="e")
         self._tree.heading("star",  text="",      anchor="center")
         self._tree.heading("size",  text="Size",  anchor="e",
                            command=lambda: self._sort_by("size"))
@@ -102,6 +104,7 @@ class MainFrame(ttk.Frame):
 
         # ── Columns ───────────────────────────────────────────────────
         self._tree.column("#0",   stretch=True,  minwidth=180, width=420, anchor="w")
+        self._tree.column("aka",  stretch=False, minwidth=120, width=170, anchor="e")
         self._tree.column("star", stretch=False, minwidth=28,  width=28,  anchor="center")
         self._tree.column("heur", stretch=False, minwidth=0,   width=0,   anchor="w")
         self._tree.column("size", stretch=False, minwidth=80,  width=110, anchor="e")
@@ -121,6 +124,9 @@ class MainFrame(ttk.Frame):
         self._tree.tag_configure("more",    foreground=_ACCENT)
         self._tree.tag_configure("symlink", foreground="#A0C4E8")
         self._tree.tag_configure("starred",  foreground=_ACCENT)
+        self._tree.tag_configure("aka_tagged",
+            foreground=_TEXT_DIM,
+            font=(_T["font_family"], _T["font_size_base"], "italic"))
         self._tree.tag_configure("drop_target", background=_ROW_H)
 
         # ── Scrollbar ─────────────────────────────────────────────────
@@ -169,7 +175,7 @@ class MainFrame(ttk.Frame):
             raw_entries = list(os.scandir(norm))
         except PermissionError:
             self._tree.insert("", "end", text="  \U0001f512  Access denied",
-                              values=("", "", ""), tags=("denied",))
+                              values=("", "", "", "", ""), tags=("denied",))
             return
         except FileNotFoundError:
             # Directory was deleted or renamed while we were viewing it.
@@ -180,7 +186,7 @@ class MainFrame(ttk.Frame):
             return
         except OSError as exc:
             self._tree.insert("", "end", text=f"  Error: {exc}",
-                              values=("", "", ""), tags=("denied",))
+                              values=("", "", "", "", ""), tags=("denied",))
             return
 
         dirs, files = [], []
@@ -194,11 +200,13 @@ class MainFrame(ttk.Frame):
         files.sort(key=lambda e: e.name.lower())
 
         for entry in dirs:
+            tag_value = _tags.get_tag(entry.path)
             self._all_rows.append({
                 "name":       entry.name,
                 "is_dir":     True,
                 "size_bytes": -1,       # -1 = pending scan
                 "heur_str":   "",
+                "aka_str":    f"aka {tag_value}" if tag_value else "",
                 "size_str":   "—",
                 "pct_str":    "—",
                 "path":       entry.path,
@@ -214,11 +222,13 @@ class MainFrame(ttk.Frame):
                 size_str = fmt_size(size)
             except OSError:
                 size, size_str = 0, "—"
+            tag_value = _tags.get_tag(entry.path)
             self._all_rows.append({
                 "name":       entry.name,
                 "is_dir":     False,
                 "size_bytes": size,
                 "heur_str":   "",
+                "aka_str":    f"aka {tag_value}" if tag_value else "",
                 "size_str":   size_str,
                 "pct_str":    "—",
                 "path":       entry.path,
@@ -384,13 +394,17 @@ class MainFrame(ttk.Frame):
             img = self._icons.get("folder" if row["is_dir"] else "file")
             is_star = self._starred_key(row["path"]) in starred_keys
             star_val = "★" if is_star else ""
-            tags = (row["tag"], "starred") if is_star else (row["tag"],)
+            tags = [row["tag"]]
+            if is_star:
+                tags.append("starred")
+            if row.get("aka_str"):
+                tags.append("aka_tagged")
             iid = self._tree.insert(
                 "", "end",
                 text=f"  {row['name']}",
                 image=img or "",
-                values=(star_val, row.get("heur_str", ""), row["size_str"], row["pct_str"]),
-                tags=tags,
+                values=(row.get("aka_str", ""), star_val, row.get("heur_str", ""), row["size_str"], row["pct_str"]),
+                tags=tuple(tags),
             )
             self._item_data[iid] = row
             self._path_iids[os.path.normcase(row["path"])] = iid
@@ -400,7 +414,7 @@ class MainFrame(ttk.Frame):
                 "", "end",
                 text=f"  … {len(self._hidden_rows)} more items — click to load",
                 image="",
-                values=("", "", ""),
+                values=("", "", "", "", ""),
                 tags=("more",),
             )
 
@@ -429,13 +443,17 @@ class MainFrame(ttk.Frame):
             img = self._icons.get("folder" if row["is_dir"] else "file")
             is_star = self._starred_key(row["path"]) in starred_keys
             star_val = "★" if is_star else ""
-            tags = (row["tag"], "starred") if is_star else (row["tag"],)
+            tags = [row["tag"]]
+            if is_star:
+                tags.append("starred")
+            if row.get("aka_str"):
+                tags.append("aka_tagged")
             iid = self._tree.insert(
                 "", "end",
                 text=f"  {row['name']}",
                 image=img or "",
-                values=(star_val, row.get("heur_str", ""), row["size_str"], row["pct_str"]),
-                tags=tags,
+                values=(row.get("aka_str", ""), star_val, row.get("heur_str", ""), row["size_str"], row["pct_str"]),
+                tags=tuple(tags),
             )
             self._item_data[iid] = row
             self._path_iids[os.path.normcase(row["path"])] = iid

@@ -18,6 +18,7 @@ from .core.shared_clipboard import (
     clear_shared_clipboard,
 )
 from .core import starred as _starred
+from .core import tags as _tags
 from .ui.search_dialog import SearchDialog
 from .settings import THEME as _T
 
@@ -174,6 +175,34 @@ def _copy_name(root: tk.Tk, state, main_frame, left_panel=None) -> None:
     root.clipboard_append(text)
 
 
+def _set_tag_dialog(root: tk.Tk, state, refresh_cb, status_cb) -> None:
+    """Ctrl+T — set or clear a tag on selected items."""
+    paths = [p for p in state.selection if isinstance(p, str) and p]
+    if not paths:
+        status_cb("Tagging skipped: no selected item")
+        return
+
+    initial = _tags.get_tag(paths[0]) if len(paths) == 1 else ""
+    value = simpledialog.askstring(
+        "Set tag",
+        "Tag for selected item(s) (leave empty to clear):",
+        parent=root,
+        initialvalue=initial or "",
+    )
+    if value is None:
+        status_cb("Tagging cancelled")
+        return
+
+    cleaned = value.strip()
+    count = _tags.set_tag_bulk(paths, cleaned if cleaned else None)
+    refresh_cb()
+
+    if cleaned:
+        status_cb(f"Tag '{cleaned}' set on {count} item(s)")
+    else:
+        status_cb(f"Tag cleared on {count} item(s)")
+
+
 # ── New folder dialog ──────────────────────────────────────────────────────────
 
 def _new_folder_dialog(root: tk.Tk, state, refresh_cb) -> None:
@@ -320,6 +349,10 @@ def bind_keys(
 
     # ── New folder dialog (Ctrl+Shift+X) ───────────────────────────────
     root.bind("<Control-X>", _guard(lambda: _new_folder_dialog(root, state, _refresh)))
+
+    # ── Set tag on selected item(s) (Ctrl+T) ───────────────────────────
+    root.bind("<Control-t>", _guard(lambda: _set_tag_dialog(root, state, _refresh, status_cb)))
+    root.bind("<Control-T>", _guard(lambda: _set_tag_dialog(root, state, _refresh, status_cb)))
 
     # ── New window at current dir (Ctrl+N) ─────────────────────────────
     root.bind("<Control-n>", _guard(lambda: _open_new_window(state.current_dir)))

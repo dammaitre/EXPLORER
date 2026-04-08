@@ -1,10 +1,10 @@
 import json
 from pathlib import Path
-from .appdirs import pyxplorer_data_dir
+from .user_files import clipboard_json_path
 
 
 def _clipboard_path() -> Path:
-    return pyxplorer_data_dir() / "clipboard.json"
+    return clipboard_json_path()
 
 
 def load_shared_clipboard() -> dict:
