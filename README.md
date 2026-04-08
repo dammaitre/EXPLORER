@@ -158,6 +158,7 @@ python -m pyxplorer --verbose
 - `Ctrl+Shift+C`: copy current path or selected paths to the system clipboard.
 - `Ctrl+Shift+N`: copy selected item name(s) to the system clipboard.
 - `Ctrl+Shift+X`: create a new folder.
+- `Ctrl+Shift+R`: reload user settings from disk.
 - `Ctrl+T`: set/clear a tag on selected item(s); tagged rows show `aka <tag>`.
 - `Ctrl+N`: open current directory in a new window.
 - `Delete`: permanently delete the selected items.

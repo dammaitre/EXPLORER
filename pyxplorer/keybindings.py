@@ -203,6 +203,17 @@ def _set_tag_dialog(root: tk.Tk, state, refresh_cb, status_cb) -> None:
         status_cb(f"Tag cleared on {count} item(s)")
 
 
+def _reload_settings(status_cb) -> None:
+    """Ctrl+Shift+R — reload settings from disk."""
+    try:
+        from . import settings
+        settings.reload()
+        status_cb("Settings reloaded successfully")
+    except Exception as exc:
+        status_cb(f"Failed to reload settings: {exc}")
+        messagebox.showerror("Reload settings", f"Error: {exc}")
+
+
 # ── New folder dialog ──────────────────────────────────────────────────────────
 
 def _new_folder_dialog(root: tk.Tk, state, refresh_cb) -> None:
@@ -353,6 +364,9 @@ def bind_keys(
     # ── Set tag on selected item(s) (Ctrl+T) ───────────────────────────
     root.bind("<Control-t>", _guard(lambda: _set_tag_dialog(root, state, _refresh, status_cb)))
     root.bind("<Control-T>", _guard(lambda: _set_tag_dialog(root, state, _refresh, status_cb)))
+
+    # ── Reload settings (Ctrl+Shift+R) ─────────────────────────────────
+    root.bind("<Control-R>", lambda e: _reload_settings(status_cb))
 
     # ── New window at current dir (Ctrl+N) ─────────────────────────────
     root.bind("<Control-n>", _guard(lambda: _open_new_window(state.current_dir)))

@@ -140,3 +140,15 @@ SCAN_SKIP_DIRS: list = _cfg["scan_skip_dirs"]
 EXT_SKIPPED: set  = _cfg["ext_skipped"]   # lowercase extensions with leading dot
 SCROLL_SPEED: float = _cfg["scroll_speed"]
 DEFAULT_PDF_ZOOM: float = _cfg["default_pdf_zoom"]
+
+
+def reload():
+    """Reload settings from disk. Updates all module-level constants."""
+    global _cfg, THEME, START_DIRS, SCAN_SKIP_DIRS, EXT_SKIPPED, SCROLL_SPEED, DEFAULT_PDF_ZOOM
+    _cfg = _load()
+    THEME = _cfg["theme"]
+    START_DIRS = _cfg["start_dirs"]
+    SCAN_SKIP_DIRS = _cfg["scan_skip_dirs"]
+    EXT_SKIPPED = _cfg["ext_skipped"]
+    SCROLL_SPEED = _cfg["scroll_speed"]
+    DEFAULT_PDF_ZOOM = _cfg["default_pdf_zoom"]
