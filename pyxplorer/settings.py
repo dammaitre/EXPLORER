@@ -4,6 +4,7 @@ All other modules import from here; never hardcode palette values elsewhere.
 """
 import json
 import os
+import re
 from .core.user_files import ensure_user_json_files, settings_json_path
 from .logging import vprint
 
@@ -38,15 +39,37 @@ _DEFAULTS: dict = {
 }
 
 
-def _load() -> dict:
+def _strip_jsonc(text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    text = re.sub(r"(^|\s)//.*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    return text
+
+
+def _load_raw_settings() -> dict:
     try:
         with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+            content = f.read()
     except FileNotFoundError:
-        raw = {}
-    except json.JSONDecodeError as exc:
-        vprint(f"[settings] Invalid JSON in settings.json: {exc}. Using defaults.")
-        raw = {}
+        return {}
+
+    try:
+        raw = json.loads(content)
+        return raw if isinstance(raw, dict) else {}
+    except json.JSONDecodeError:
+        try:
+            raw = json.loads(_strip_jsonc(content))
+            return raw if isinstance(raw, dict) else {}
+        except json.JSONDecodeError as exc:
+            vprint(f"[settings] Invalid JSON in settings.json: {exc}. Using defaults.")
+            return {}
+    except Exception as exc:
+        vprint(f"[settings] Failed reading settings.json: {exc}. Using defaults.")
+        return {}
+
+
+def _load() -> dict:
+    raw = _load_raw_settings()
 
     theme = {**_DEFAULTS["theme"], **raw.get("theme", {})}
     try:
