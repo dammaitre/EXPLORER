@@ -52,6 +52,7 @@ class SearchDialog:
         self._navigate_cb = navigate_cb
         self._open_pdf_cb = open_pdf_cb
         self._open_image_cb = open_image_cb
+        self._original_dir = normalize(state.current_dir)  # Capture original dir when dialog opens
 
         self._token:      CancelToken | None = None
         self._queue:      queue.Queue        = queue.Queue()
@@ -66,6 +67,10 @@ class SearchDialog:
         self._size_worker_stop = threading.Event()
         self._size_worker = threading.Thread(target=self._size_worker_loop, daemon=True)
         self._size_worker.start()
+        
+        # Search scope: "current" (default) | "selected" | "original"
+        self._search_scope = tk.StringVar(value="current")
+        self._current_search_root = self._original_dir  # Default to original dir at start
 
         self._build()
 
@@ -112,6 +117,30 @@ class SearchDialog:
         self._error_lbl.pack(side=tk.LEFT, padx=(10, 0))
 
         self._pattern_var.trace_add("write", self._on_pattern_changed)
+
+        # ── Search scope buttons (mutually exclusive) ─────────────────────
+        scope_row = ttk.Frame(dlg, style="TFrame")
+        scope_row.pack(fill=tk.X, padx=14, pady=(2, 4))
+
+        ttk.Label(
+            scope_row, text="Search in:",
+            font=(_FONT, _SZ_S), foreground=TEXT_M,
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        scope_buttons = [
+            ("Current dir", "current"),
+            ("Selected dirs", "selected"),
+            ("Original dir", "original"),
+        ]
+
+        for label, value in scope_buttons:
+            ttk.Radiobutton(
+                scope_row,
+                text=label,
+                variable=self._search_scope,
+                value=value,
+                command=self._on_scope_changed,
+            ).pack(side=tk.LEFT, padx=2)
 
         # ── Status bar ───────────────────────────────────────────────────
         self._status_var = tk.StringVar(value="Type a regex pattern…")
@@ -195,6 +224,10 @@ class SearchDialog:
             self._dlg.after_cancel(self._debounce_id)
         self._debounce_id = self._dlg.after(300, self._start_search)
 
+    def _on_scope_changed(self) -> None:
+        """Triggered when search scope changes; restart search with new root."""
+        self._start_search()
+
     def _start_search(self) -> None:
         pattern = self._pattern_var.get().strip()
 
@@ -213,6 +246,17 @@ class SearchDialog:
             self._tree.heading("heur", text="")
             self._tree.column("heur", width=0, stretch=False, minwidth=0, anchor="w")
             return
+
+        # Determine search root based on selected scope
+        scope = self._search_scope.get()
+        if scope == "original":
+            search_root = self._original_dir
+        elif scope == "selected":
+            # Use selected directories if any, else current dir
+            selected = self._state.selection if self._state.selection else [self._state.current_dir]
+            search_root = normalize(selected[0]) if selected else normalize(self._state.current_dir)
+        else:  # "current"
+            search_root = normalize(self._state.current_dir)
 
         # Validate regex before launching thread
         try:
@@ -247,10 +291,11 @@ class SearchDialog:
         self._tree.heading("heur", text="")
         self._tree.column("heur", width=0, stretch=False, minwidth=0, anchor="w")
         self._status_var.set("Searching…")
+        self._current_search_root = search_root  # Store for use in polling
 
         threading.Thread(
             target=search_names,
-            args=(self._state.current_dir, pattern, self._queue, self._token),
+            args=(search_root, pattern, self._queue, self._token),
             daemon=True,
         ).start()
 
@@ -270,7 +315,7 @@ class SearchDialog:
 
                 if kind == "search_result":
                     _, name, rel, ftype = msg
-                    root_dir = normalize(self._state.current_dir)
+                    root_dir = self._current_search_root  # Use stored search root
                     full_path = normalize(os.path.join(root_dir, rel))
                     parent_rel = os.path.dirname(rel) if rel else ""
                     if ftype == "file":
