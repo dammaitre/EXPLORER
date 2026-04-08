@@ -396,6 +396,52 @@ def bind_keys(
 
     root.bind("<Control-f>", _guard(_open_search))
 
+    # ── Tab: toggle focus between main frame and sub-windows ─────────────
+    def _on_tab(event=None) -> str:
+        """Tab: focus main frame if in sub-window, else focus search window if open."""
+        try:
+            focused = root.focus_get()
+        except Exception:
+            focused = None
+
+        # Check if focus is in a sub-window (search, heuristics, etc.)
+        in_subwindow = False
+        if _search_holder and _search_holder[0].alive:
+            search_dialog = _search_holder[0]
+            search_dlg = search_dialog._dlg
+            # Check if focused widget is within search dialog
+            if focused and search_dlg.winfo_exists():
+                try:
+                    # Walk up the widget hierarchy to see if focused is a child of search dialog
+                    current = focused
+                    while current:
+                        if current == search_dlg:
+                            in_subwindow = True
+                            break
+                        parent = current.master
+                        if parent is None or parent == root:
+                            break
+                        current = parent
+                except Exception:
+                    pass
+
+        # If in a sub-window, move focus to main frame
+        if in_subwindow:
+            main_frame._tree.focus_set()
+            return "break"
+
+        # If in main frame and search window exists, focus search window
+        if _search_holder and _search_holder[0].alive:
+            search_dialog = _search_holder[0]
+            search_dlg = search_dialog._dlg
+            if search_dlg.winfo_exists():
+                search_dialog._entry.focus_set()
+                return "break"
+
+        return "break"
+
+    root.bind("<Tab>", _on_tab)
+
     # ── Delete (Suppr) ─────────────────────────────────────────────────
     def _do_delete():
         paths = list(state.selection)

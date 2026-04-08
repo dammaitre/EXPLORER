@@ -163,6 +163,7 @@ python -m pyxplorer --verbose
 - `Ctrl+N`: open current directory in a new window.
 - `Delete`: permanently delete the selected items.
 - `Ctrl+R`: open the run dialog.
+- `Tab`: toggle focus between main frame and search window (if open).
 - `Ctrl+F`: open regex search dialog (results show file name and parent directory path).
 - `Ctrl+Alt+P`: show PDF panel and load selected PDF.
   - In PDF panel: click-drag to select text or image region.
