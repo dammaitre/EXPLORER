@@ -175,6 +175,7 @@ python -m pyxplorer --verbose
 - `Ctrl+Alt+T`: show terminal panel and restart terminal in current directory.
 - `Ctrl+Alt+N`: show temp notes panel and reset temp file.
 - `Ctrl+H`: toggle heuristics window.
+- `?`: show keyboard shortcuts help window.
 - `Escape`: hide lower panel.
 - `Left` or `Backspace`: navigate up.
 - `Right` or `Enter`: open the selected directory.

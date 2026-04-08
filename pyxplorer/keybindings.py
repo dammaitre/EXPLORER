@@ -18,6 +18,7 @@ from .core.shared_clipboard import (
     clear_shared_clipboard,
 )
 from .core import starred as _starred
+from .ui.help_window import show_help_window
 from .core import tags as _tags
 from .ui.search_dialog import SearchDialog
 from .settings import THEME as _T
@@ -533,6 +534,15 @@ def bind_keys(
         close_cb = root.destroy
     root.bind("<Control-w>", lambda e: close_cb())
     root.bind("<Control-W>", lambda e: close_cb())
+
+    # ── Help window (?) ──────────────────────────────────────────────────────
+    # Bind both ? and shift+/ for QWERTY/AZERTY compatibility
+    def _show_help(event=None):
+        show_help_window(root)
+        return "break"
+    
+    root.bind("?", _show_help)
+    root.bind("/", _show_help)
 
     # ── Star toggle (Ctrl+S) ─────────────────────────────────────────────
     def _do_toggle_star():
