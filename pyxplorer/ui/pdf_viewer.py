@@ -144,6 +144,12 @@ class PDFViewer(ttk.Frame):
     def focus_viewer(self) -> None:
         self._canvas.focus_set()
 
+    def page_down(self) -> None:
+        self._on_page_down(None)
+
+    def page_up(self) -> None:
+        self._on_page_up(None)
+
     def show_message(self, message: str) -> None:
         self._message_var.set(message)
 
@@ -862,13 +868,13 @@ class PDFViewer(ttk.Frame):
         self._canvas.yview_moveto(max(0.0, min(1.0, layout["y"] / total_height)))
         self._schedule_visible_render()
 
-    def _on_page_down(self, event: tk.Event) -> str:
+    def _on_page_down(self, event: tk.Event | None = None) -> str:
         if self._doc is None:
             return "break"
         self._scroll_to_page(self._current_top_page() + 1)
         return "break"
 
-    def _on_page_up(self, event: tk.Event) -> str:
+    def _on_page_up(self, event: tk.Event | None = None) -> str:
         if self._doc is None:
             return "break"
         current = self._current_top_page()

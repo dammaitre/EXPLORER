@@ -1,9 +1,63 @@
+import os
 import re
+import sys
 import time
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
 from typing import Callable
+
+
+# ── Lock-file helpers ─────────────────────────────────────────────────────────
+
+def _lock_path(notes_path: Path) -> Path:
+    return notes_path.parent / (notes_path.name + ".lock")
+
+
+def _pid_alive(pid: int) -> bool:
+    """Return True if a process with this PID is currently running."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            SYNCHRONIZE = 0x00100000
+            handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if handle == 0:
+                return False
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        else:
+            os.kill(pid, 0)
+            return True
+    except (OSError, PermissionError):
+        return False
+
+
+def _try_acquire_lock(notes_path: Path) -> bool:
+    """Write our PID to the lock file and return True, unless another live process holds it."""
+    lp = _lock_path(notes_path)
+    if lp.exists():
+        try:
+            pid = int(lp.read_text(encoding="utf-8").strip())
+            if pid != os.getpid() and _pid_alive(pid):
+                return False          # genuinely locked by another instance
+        except (ValueError, OSError):
+            pass                      # stale / corrupt lock — overwrite it
+    try:
+        lp.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError:
+        pass
+    return True
+
+
+def _release_lock(notes_path: Path) -> None:
+    lp = _lock_path(notes_path)
+    try:
+        if lp.exists():
+            pid_text = lp.read_text(encoding="utf-8").strip()
+            if int(pid_text) == os.getpid():
+                lp.unlink(missing_ok=True)
+    except (ValueError, OSError):
+        pass
 
 from ..settings import THEME as _T
 from .scroll_utils import make_autohide_pack_setter
@@ -88,7 +142,8 @@ class TempNotepad(ttk.Frame):
         self._autosave_after:   str | None = None
         self._highlight_after:  str | None = None
         self._temp_path = self._build_temp_path()
-        self._loaded: bool = False
+        self._loaded:    bool = False
+        self._readonly:  bool = False
 
         self._build()
 
@@ -197,11 +252,24 @@ class TempNotepad(ttk.Frame):
             self._status_cb(f"Notes read error: {exc}")
             text = ""
 
+        # Try to acquire the lock; fall back to read-only if another instance holds it
+        if _try_acquire_lock(self._temp_path):
+            self._readonly = False
+            self._text.configure(state="normal")
+            title_suffix = ""
+        else:
+            self._readonly = True
+            title_suffix = "  [read-only — locked by another instance]"
+            self._status_cb("Notepad is read-only: locked by another running instance")
+
         self._text.delete("1.0", tk.END)
         self._text.insert("1.0", text)
+        if self._readonly:
+            self._text.configure(state="disabled")
         self._rehighlight()
-        self._title_var.set(f"Markdown notes — {self._temp_path}")
-        self._status_cb(f"Notes loaded: {self._temp_path}")
+        self._title_var.set(f"Markdown notes — {self._temp_path}{title_suffix}")
+        if not self._readonly:
+            self._status_cb(f"Notes loaded: {self._temp_path}")
         self._loaded = True
         self._text.focus_set()
         self._schedule_autosave_loop()
@@ -209,6 +277,14 @@ class TempNotepad(ttk.Frame):
     def shutdown(self) -> None:
         self._cancel_autosave_loop()
         self._save_now()
+        _release_lock(self._temp_path)
+
+    def save_and_unlock(self) -> None:
+        """Save content and release the lock (panel hide). Autosave keeps running.
+        Next load() call will re-acquire the lock fresh."""
+        self._save_now()
+        _release_lock(self._temp_path)
+        self._loaded = False   # force re-acquire on next open
 
     def focus_editor(self) -> None:
         self._text.focus_set()
@@ -252,11 +328,30 @@ class TempNotepad(ttk.Frame):
 
     def _autosave_tick(self) -> None:
         self._autosave_after = None
-        self._save_now()
+        if self._readonly:
+            # Check if the lock has been freed by the other instance
+            if _try_acquire_lock(self._temp_path):
+                self._readonly = False
+                self._text.configure(state="normal")
+                # Reload fresh content now that we own it
+                try:
+                    text = self._temp_path.read_text(encoding="utf-8")
+                    self._text.delete("1.0", tk.END)
+                    self._text.insert("1.0", text)
+                    self._text.configure(state="normal")
+                    self._rehighlight()
+                except Exception:
+                    pass
+                self._title_var.set(f"Markdown notes — {self._temp_path}")
+                self._status_cb("Notepad lock acquired — now editable")
+        else:
+            self._save_now()
         self._schedule_autosave_loop()
 
     def _save_now(self) -> None:
         self._save_after = None
+        if self._readonly:
+            return
         text = self._text.get("1.0", "end-1c")
         self._temp_path.parent.mkdir(parents=True, exist_ok=True)
         try:

@@ -295,6 +295,9 @@ class App:
             pdf_copy_image_cb=lambda: self.lower_panel.copy_pdf_selection_image(),
             pdf_ocr_cb=lambda: self.lower_panel.copy_pdf_selection_ocr_text(),
             reload_settings_cb=self._on_settings_reloaded,
+            pdf_page_down_cb=self.lower_panel._pdf_viewer.page_down,
+            pdf_page_up_cb=self.lower_panel._pdf_viewer.page_up,
+            pre_hide_lower_cb=self.lower_panel._notes.save_and_unlock,
         )
         self.status_bar.set_status(_runtime_capabilities_message(self._dnd_enabled))
         self.root.protocol("WM_DELETE_WINDOW", self.close)

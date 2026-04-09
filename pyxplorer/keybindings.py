@@ -324,6 +324,9 @@ def bind_keys(
     pdf_copy_image_cb=None,
     pdf_ocr_cb=None,
     reload_settings_cb=None,
+    pdf_page_down_cb=None,
+    pdf_page_up_cb=None,
+    pre_hide_lower_cb=None,
 ) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
@@ -481,6 +484,11 @@ def bind_keys(
         root.bind("<Control-Alt-p>", lambda e: open_pdf_cb())
         root.bind("<Control-Alt-P>", lambda e: open_pdf_cb())
 
+    if pdf_page_down_cb is not None:
+        root.bind("<Next>",  lambda _: pdf_page_down_cb())
+    if pdf_page_up_cb is not None:
+        root.bind("<Prior>", lambda _: pdf_page_up_cb())
+
     # ── PDF viewer: copy selection as image (Ctrl+I) ──────────────────
     if pdf_copy_image_cb is not None:
         root.bind("<Control-i>", lambda e: pdf_copy_image_cb() or "break")
@@ -528,6 +536,8 @@ def bind_keys(
             # Cancel an in-progress image load before hiding the panel
             if cancel_image_load_cb is not None and cancel_image_load_cb():
                 return "break"
+            if pre_hide_lower_cb is not None:
+                pre_hide_lower_cb()
             hide_lower_cb()
             return "break"
 
