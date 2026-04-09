@@ -137,6 +137,8 @@ class PDFViewer(ttk.Frame):
         self._canvas.bind("<Control-I>", lambda e: self.copy_selection_image() or "break")
         self._canvas.bind("<Control-o>", lambda e: self.copy_selection_ocr_text() or "break")
         self._canvas.bind("<Control-O>", lambda e: self.copy_selection_ocr_text() or "break")
+        self._canvas.bind("<Next>",      self._on_page_down)
+        self._canvas.bind("<Prior>",     self._on_page_up)
         self._canvas.bind("<Configure>", self._on_canvas_configure)
 
     def focus_viewer(self) -> None:
@@ -836,6 +838,47 @@ class PDFViewer(ttk.Frame):
             self._rerender_current_pdf()
         else:
             self.show_message(f"PDF zoom set to {round(self._zoom * 100)}%")
+        return "break"
+
+    def _current_top_page(self) -> int:
+        """Index of the first page whose bottom edge is below the viewport top."""
+        if not self._page_layouts:
+            return 0
+        viewport_top = self._canvas.canvasy(0)
+        for layout in self._page_layouts:
+            if layout["y"] + layout["render_height"] > viewport_top:
+                return layout["index"]
+        return self._page_count - 1
+
+    def _scroll_to_page(self, index: int) -> None:
+        if not self._page_layouts:
+            return
+        index = max(0, min(index, self._page_count - 1))
+        layout = self._page_layouts[index]
+        last = self._page_layouts[-1]
+        total_height = last["y"] + last["render_height"] + _MARGIN_Y
+        if total_height <= 0:
+            return
+        self._canvas.yview_moveto(max(0.0, min(1.0, layout["y"] / total_height)))
+        self._schedule_visible_render()
+
+    def _on_page_down(self, event: tk.Event) -> str:
+        if self._doc is None:
+            return "break"
+        self._scroll_to_page(self._current_top_page() + 1)
+        return "break"
+
+    def _on_page_up(self, event: tk.Event) -> str:
+        if self._doc is None:
+            return "break"
+        current = self._current_top_page()
+        viewport_top = self._canvas.canvasy(0)
+        layout = self._page_layouts[current]
+        # If already near the top of the current page, jump to the previous one
+        if current == 0 or abs(layout["y"] - viewport_top) < 10:
+            self._scroll_to_page(current - 1)
+        else:
+            self._scroll_to_page(current)
         return "break"
 
     def _capture_zoom_anchor(self) -> dict | None:
