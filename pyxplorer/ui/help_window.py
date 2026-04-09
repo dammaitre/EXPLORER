@@ -121,7 +121,7 @@ def show_help_window(root: tk.Tk) -> None:
         ]),
         ("UTILITIES", [
             ("Ctrl+R", "Open run dialog (execute command)"),
-            ("?", "Show this help window"),
+            ("Ctrl+?", "Show this help window"),
             ("Ctrl+W", "Close window"),
         ]),
     ]

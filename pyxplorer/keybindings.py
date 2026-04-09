@@ -204,11 +204,13 @@ def _set_tag_dialog(root: tk.Tk, state, refresh_cb, status_cb) -> None:
         status_cb(f"Tag cleared on {count} item(s)")
 
 
-def _reload_settings(status_cb) -> None:
+def _reload_settings(status_cb, on_reload_cb=None) -> None:
     """Ctrl+Shift+R — reload settings from disk."""
     try:
         from . import settings
         settings.reload()
+        if on_reload_cb is not None:
+            on_reload_cb()
         status_cb("Settings reloaded successfully")
     except Exception as exc:
         status_cb(f"Failed to reload settings: {exc}")
@@ -321,6 +323,7 @@ def bind_keys(
     lower_panel_focus_cb=None,
     pdf_copy_image_cb=None,
     pdf_ocr_cb=None,
+    reload_settings_cb=None,
 ) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
@@ -367,7 +370,7 @@ def bind_keys(
     root.bind("<Control-T>", _guard(lambda: _set_tag_dialog(root, state, _refresh, status_cb)))
 
     # ── Reload settings (Ctrl+Shift+R) ─────────────────────────────────
-    root.bind("<Control-R>", lambda e: _reload_settings(status_cb))
+    root.bind("<Control-R>", lambda e: _reload_settings(status_cb, on_reload_cb=reload_settings_cb))
 
     # ── New window at current dir (Ctrl+N) ─────────────────────────────
     root.bind("<Control-n>", _guard(lambda: _open_new_window(state.current_dir)))
@@ -535,14 +538,25 @@ def bind_keys(
     root.bind("<Control-w>", lambda e: close_cb())
     root.bind("<Control-W>", lambda e: close_cb())
 
-    # ── Help window (?) ──────────────────────────────────────────────────────
-    # Bind both ? and shift+/ for QWERTY/AZERTY compatibility
+    # ── Help window (Ctrl+?) ─────────────────────────────────────────────────
+    # Use a keypress filter so plain '?' typing never opens help.
     def _show_help(event=None):
         show_help_window(root)
         return "break"
-    
-    root.bind("?", _show_help)
-    root.bind("/", _show_help)
+
+    def _maybe_show_help(event=None):
+        if event is None:
+            return None
+        if not (event.state & 0x0004):
+            return None
+
+        keysym = (getattr(event, "keysym", "") or "").lower()
+        char = getattr(event, "char", "") or ""
+        if keysym in {"question", "slash"} or char == "?":
+            return _show_help(event)
+        return None
+
+    root.bind_all("<KeyPress>", _maybe_show_help, add="+")
 
     # ── Star toggle (Ctrl+S) ─────────────────────────────────────────────
     def _do_toggle_star():

@@ -294,9 +294,13 @@ class App:
             lower_panel_focus_cb=self.lower_panel.contains_focus,
             pdf_copy_image_cb=lambda: self.lower_panel.copy_pdf_selection_image(),
             pdf_ocr_cb=lambda: self.lower_panel.copy_pdf_selection_ocr_text(),
+            reload_settings_cb=self._on_settings_reloaded,
         )
         self.status_bar.set_status(_runtime_capabilities_message(self._dnd_enabled))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+
+    def _on_settings_reloaded(self) -> None:
+        self.left_panel.refresh_roots()
 
     def _set_title(self, path: str) -> None:
         self.root.title(f"Pyxplorer - {to_display(path)}")

@@ -16,6 +16,7 @@ _SZ = _T["font_size_base"]
 _SZ_S = _T["font_size_small"]
 
 _SAVE_DELAY_MS = 250
+_AUTO_SAVE_INTERVAL_MS = 10_000
 
 
 class TempNotepad(ttk.Frame):
@@ -24,6 +25,7 @@ class TempNotepad(ttk.Frame):
         self.root = root
         self._status_cb = status_cb or (lambda message: None)
         self._save_after: str | None = None
+        self._autosave_after: str | None = None
         self._temp_path = self._build_temp_path()
 
         self._build()
@@ -83,16 +85,28 @@ class TempNotepad(ttk.Frame):
 
     def load(self) -> None:
         self._cancel_pending_save()
+        self._cancel_autosave_loop()
         self._temp_path.parent.mkdir(parents=True, exist_ok=True)
-        self._temp_path.write_text("", encoding="utf-8")
+
+        if not self._temp_path.exists():
+            self._temp_path.write_text("", encoding="utf-8")
+
+        try:
+            text = self._temp_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            self._status_cb(f"Temp file read error: {exc}")
+            text = ""
 
         self._text.delete("1.0", tk.END)
+        self._text.insert("1.0", text)
         self._title_var.set(f"Temp notes — {self._temp_path}")
-        self._status_cb(f"Temp file reset: {self._temp_path}")
+        self._status_cb(f"Temp file loaded: {self._temp_path}")
         self._text.focus_set()
+        self._schedule_autosave_loop()
 
     def shutdown(self) -> None:
         self._cancel_pending_save()
+        self._cancel_autosave_loop()
         try:
             self._temp_path.unlink(missing_ok=True)
         except Exception as exc:
@@ -118,6 +132,24 @@ class TempNotepad(ttk.Frame):
         except Exception:
             pass
         self._save_after = None
+
+    def _schedule_autosave_loop(self) -> None:
+        self._cancel_autosave_loop()
+        self._autosave_after = self.after(_AUTO_SAVE_INTERVAL_MS, self._autosave_tick)
+
+    def _autosave_tick(self) -> None:
+        self._autosave_after = None
+        self._save_now()
+        self._schedule_autosave_loop()
+
+    def _cancel_autosave_loop(self) -> None:
+        if self._autosave_after is None:
+            return
+        try:
+            self.after_cancel(self._autosave_after)
+        except Exception:
+            pass
+        self._autosave_after = None
 
     def _save_now(self) -> None:
         self._save_after = None

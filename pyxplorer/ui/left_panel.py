@@ -18,7 +18,8 @@ from typing import Callable
 
 from ..core.longpath import normalize, to_display
 from ..core import starred as _starred
-from ..settings import THEME as _T, START_DIRS, SCROLL_SPEED
+from .. import settings
+from ..settings import THEME as _T, SCROLL_SPEED
 from .scroll_utils import make_autohide_pack_setter
 
 _BG_PANEL  = _T["bg_dark"]
@@ -158,13 +159,13 @@ class LeftPanel(ttk.Frame):
     def _populate_roots(self) -> None:
         # Extra dirs from CLI arg come first; deduplicate against settings START_DIRS
         extra_keys = {os.path.normcase(normalize(p)) for p in self._extra_start_dirs}
-        settings_dirs = [p for p in START_DIRS
+        settings_dirs = [p for p in settings.START_DIRS
                          if os.path.normcase(normalize(p)) not in extra_keys]
         combined = self._extra_start_dirs + settings_dirs
-        valid_start = [p for p in combined if os.path.isdir(normalize(p))]
+        configured_start = [p for p in combined if str(p).strip()]
 
-        if valid_start:
-            for path in valid_start:
+        if configured_start:
+            for path in configured_start:
                 label = Path(to_display(path)).name or to_display(path)
                 iid = self._insert_node("", path, f"  {label}", tags=("drive",))
                 self._insert_dummy(iid)
@@ -180,6 +181,17 @@ class LeftPanel(ttk.Frame):
         else:
             iid = self._insert_node("", "/", "  /", tags=("drive",))
             self._insert_dummy(iid)
+
+    def refresh_roots(self) -> None:
+        """Rebuild top-level roots from current settings and keep current highlight when possible."""
+        for iid in list(self._tree.get_children("")):
+            self._tree.delete(iid)
+        self._node_paths.clear()
+        self._path_nodes.clear()
+        self._loaded.clear()
+        self._current_iid = None
+        self._populate_roots()
+        self.load_dir(self.state.current_dir)
 
     # ------------------------------------------------------------------
     # Node helpers
