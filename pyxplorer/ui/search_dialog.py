@@ -513,15 +513,9 @@ class SearchDialog:
         return self._move_selection(+1)
 
     def _on_return_key(self, event=None) -> str | None:
-        # Skip if the pattern entry is focused — don't interfere with typing.
-        try:
-            if self._dlg.focus_get() is self._entry:
-                return
-        except Exception:
-            pass
         result = self._selected_result()
         if not result:
-            return "break"
+            return  # nothing selected, let event pass through
         full_path, parent, ftype = result
         self._navigate_cb(full_path if ftype == "dir" else parent)
         self._dlg.lift()
