@@ -186,7 +186,14 @@ class EmbeddedTerminal(ttk.Frame):
 
     def _shell_argv(self) -> list[str]:
         if sys.platform == "win32":
-            return ["powershell.exe", "-NoLogo"]
+            # -NoExit keeps the shell open after the initial -Command.
+            # Removing PSReadLine before the prompt appears prevents it from
+            # emitting per-character VT cursor-movement sequences that our
+            # non-VT100 text widget cannot interpret, causing garbled output.
+            return [
+                "powershell.exe", "-NoLogo", "-NoExit",
+                "-Command", "Remove-Module PSReadLine -ErrorAction SilentlyContinue",
+            ]
         shell = os.environ.get("SHELL")
         if shell:
             return [shell, "-i"]
@@ -269,7 +276,7 @@ class EmbeddedTerminal(ttk.Frame):
             self._append_text("Terminal is not running.\n")
             return "break"
         try:
-            proc.write(command + "\r\n")
+            proc.write(command + "\r")
         except Exception as exc:
             self._append_text(f"Write error: {exc}\n")
             self._status_cb(f"Terminal write error: {exc}")
@@ -306,4 +313,7 @@ class EmbeddedTerminal(ttk.Frame):
     @staticmethod
     def _clean_ansi(text: str) -> str:
         no_osc = _OSC_RE.sub("", text)
-        return _ANSI_RE.sub("", no_osc)
+        no_ansi = _ANSI_RE.sub("", no_osc)
+        # Normalize Windows line endings; discard bare \r (cursor-return
+        # artifacts left after stripping VT sequences).
+        return no_ansi.replace("\r\n", "\n").replace("\r", "")
