@@ -54,6 +54,7 @@ _ZOOM_MAX = 3.0
 _ZOOM_STEP = 1.1
 _DEFAULT_ZOOM = min(_ZOOM_MAX, max(_ZOOM_MIN, DEFAULT_PDF_ZOOM))
 _SCROLL_SPEED = SCROLL_SPEED
+_VISIBLE_PAGE_BUFFER = 2
 
 
 class PDFViewer(ttk.Frame):
@@ -67,6 +68,7 @@ class PDFViewer(ttk.Frame):
         self.root = root
         self._status_cb = status_cb or (lambda message: None)
         self._doc = None
+        self._doc_bytes: bytes | None = None
         self._doc_path: str | None = None
         self._page_count = 0
         self._loaded_count = 0
@@ -75,7 +77,11 @@ class PDFViewer(ttk.Frame):
         self._render_queue: queue.Queue = queue.Queue()
         self._pump_after: str | None = None
         self._worker: threading.Thread | None = None
+        self._visible_after: str | None = None
         self._page_views: list[dict] = []
+        self._page_view_by_index: dict[int, dict] = {}
+        self._page_layouts: list[dict] = []
+        self._pending_pages: set[int] = set()
         self._photos: list = []
         self._page_payloads: dict[int, dict] = {}
         self._selection_items: list[int] = []
@@ -83,6 +89,7 @@ class PDFViewer(ttk.Frame):
         self._drag_anchor: tuple[float, float] | None = None
         self._drag_current: tuple[float, float] | None = None
         self._zoom = _DEFAULT_ZOOM
+        self._pending_zoom_anchor: dict | None = None
 
         self._build()
         self.show_message("Select a single PDF file and press Ctrl+Alt+P.")
@@ -141,10 +148,7 @@ class PDFViewer(ttk.Frame):
     @property
     def is_loading(self) -> bool:
         """True while a render worker is active and pages are still pending."""
-        return (
-            self._doc is not None
-            and self._loaded_count + self._failed_count < self._page_count
-        )
+        return self._doc is not None and bool(self._pending_pages)
 
     def cancel_load(self) -> None:
         """Cancel an in-progress load and reset the viewer."""
@@ -161,14 +165,24 @@ class PDFViewer(ttk.Frame):
             except Exception:
                 pass
             self._pump_after = None
+        if self._visible_after is not None:
+            try:
+                self.after_cancel(self._visible_after)
+            except Exception:
+                pass
+            self._visible_after = None
         self._clear_selection()
         self._page_views.clear()
+        self._page_view_by_index.clear()
+        self._page_layouts.clear()
+        self._pending_pages.clear()
         self._photos.clear()
         self._page_payloads.clear()
         self._page_count = 0
         self._loaded_count = 0
         self._failed_count = 0
         self._doc_path = None
+        self._doc_bytes = None
         try:
             if self._doc is not None:
                 self._doc.close()
@@ -193,7 +207,15 @@ class PDFViewer(ttk.Frame):
             return
 
         try:
-            doc = fitz.open(norm)
+            with open(norm, "rb") as handle:
+                pdf_bytes = handle.read()
+        except Exception as exc:
+            self.show_message(f"Unable to read PDF: {exc}")
+            self._status_cb(f"PDF read error: {exc}")
+            return
+
+        try:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         except Exception as exc:
             self.show_message(f"Unable to open PDF: {exc}")
             self._status_cb(f"PDF open error: {exc}")
@@ -201,24 +223,35 @@ class PDFViewer(ttk.Frame):
 
         self.unload()
         self._doc = doc
+        self._doc_bytes = pdf_bytes
         self._doc_path = norm
         self._page_count = doc.page_count
         self._loaded_count = 0
         self._failed_count = 0
         self._load_token += 1
-        token = self._load_token
         self._canvas.delete("all")
         self._canvas.configure(scrollregion=(0, 0, 0, 0))
-        self._render_loading_state()
-        self._emit_progress("loading")
+        self._rebuild_page_layouts()
+        self._request_visible_pages(priority=True)
 
-        self._worker = threading.Thread(
-            target=self._render_all_pages,
-            args=(norm, token, self._page_count, self._zoom),
-            daemon=True,
-        )
-        self._worker.start()
-        self._ensure_queue_pump()
+    def _rerender_current_pdf(self) -> None:
+        if self._doc is None or self._page_count <= 0:
+            return
+
+        self._pending_zoom_anchor = self._capture_zoom_anchor()
+        self._load_token += 1
+        self._clear_selection()
+        self._page_views.clear()
+        self._page_view_by_index.clear()
+        self._photos.clear()
+        self._page_payloads.clear()
+        self._pending_pages.clear()
+        self._loaded_count = 0
+        self._failed_count = 0
+        self._canvas.delete("all")
+        self._canvas.configure(scrollregion=(0, 0, 0, 0))
+        self._rebuild_page_layouts()
+        self._request_visible_pages(priority=True)
 
     def copy_selection(self) -> str | None:
         if not self._selection_text:
@@ -535,8 +568,10 @@ class PDFViewer(ttk.Frame):
 
             if kind == "page":
                 self._append_page(payload, token)
+                self._pending_pages.discard(payload.get("index", -1))
                 self._emit_progress("loading")
             elif kind == "page_skip":
+                self._pending_pages.discard(payload.get("index", -1))
                 self._failed_count += 1
                 if self._failed_count <= 3:
                     page_no = payload.get("index", 0) + 1
@@ -549,16 +584,43 @@ class PDFViewer(ttk.Frame):
                 self.show_message(payload)
                 self._status_cb(payload)
 
-        if self._doc is not None and (self._loaded_count + self._failed_count) < self._page_count:
+        if self._doc is not None and self._pending_pages:
             self._ensure_queue_pump()
 
-    def _render_all_pages(self, path: str, token: int, page_count: int, zoom: float) -> None:
+    def _start_render_for_indices(self, indices: list[int]) -> None:
+        if self._doc is None:
+            return
+        if not indices:
+            return
+        token = self._load_token
+        self._pending_pages.update(indices)
+        self._worker = threading.Thread(
+            target=self._render_pages,
+            args=(token, indices, self._zoom, self._doc_bytes, self._doc_path),
+            daemon=True,
+        )
+        self._worker.start()
+        self._ensure_queue_pump()
+
+    def _render_pages(
+        self,
+        token: int,
+        indices: list[int],
+        zoom: float,
+        doc_bytes: bytes | None,
+        doc_path: str | None,
+    ) -> None:
         if fitz is None:
             return
         worker_doc = None
         try:
-            worker_doc = fitz.open(path)
-            for index in range(page_count):
+            if doc_bytes:
+                worker_doc = fitz.open(stream=doc_bytes, filetype="pdf")
+            elif doc_path:
+                worker_doc = fitz.open(doc_path)
+            else:
+                raise RuntimeError("No PDF source available for rendering.")
+            for index in indices:
                 if token != self._load_token:
                     return
                 try:
@@ -580,6 +642,97 @@ class PDFViewer(ttk.Frame):
                     worker_doc.close()
             except Exception:
                 pass
+
+    def _rebuild_page_layouts(self) -> None:
+        if self._doc is None:
+            self._page_layouts = []
+            self._canvas.configure(scrollregion=(0, 0, 0, 0))
+            return
+
+        layouts: list[dict] = []
+        y = _MARGIN_Y
+        max_width = 0
+        for index in range(self._page_count):
+            page = self._doc.load_page(index)
+            rect = page.rect
+            render_width = max(1, int(round(rect.width * self._zoom)))
+            render_height = max(1, int(round(rect.height * self._zoom)))
+            layouts.append({
+                "index": index,
+                "x": 0.0,
+                "y": y,
+                "render_width": render_width,
+                "render_height": render_height,
+                "page_width": rect.width,
+                "page_height": rect.height,
+            })
+            y += render_height + _PAGE_GAP
+            max_width = max(max_width, render_width)
+
+        self._page_layouts = layouts
+        self._loaded_count = 0
+        scroll_height = (layouts[-1]["y"] + layouts[-1]["render_height"] + _MARGIN_Y) if layouts else 0
+        scroll_width = max(max_width + (_MARGIN_X * 2), 1)
+        self._canvas.configure(scrollregion=(0, 0, scroll_width, scroll_height))
+        self._recenter_pages()
+        self._emit_progress("loading")
+
+    def _visible_page_indices(self) -> list[int]:
+        if not self._page_layouts:
+            return []
+
+        viewport_top = self._canvas.canvasy(0)
+        viewport_bottom = self._canvas.canvasy(max(self._canvas.winfo_height(), 1))
+        first = 0
+        last = -1
+        found = False
+
+        for layout in self._page_layouts:
+            page_top = layout["y"]
+            page_bottom = layout["y"] + layout["render_height"]
+            if page_bottom < viewport_top:
+                continue
+            if page_top > viewport_bottom:
+                break
+            index = layout["index"]
+            if not found:
+                first = index
+                found = True
+            last = index
+
+        if not found:
+            first = 0
+            last = min(self._page_count - 1, _VISIBLE_PAGE_BUFFER)
+
+        start = max(0, first - _VISIBLE_PAGE_BUFFER)
+        end = min(self._page_count - 1, last + _VISIBLE_PAGE_BUFFER)
+        return list(range(start, end + 1))
+
+    def _request_visible_pages(self, priority: bool = False) -> None:
+        if self._doc is None or not self._page_layouts:
+            return
+        indices = self._visible_page_indices()
+        missing = [
+            index for index in indices
+            if index not in self._page_view_by_index and index not in self._pending_pages
+        ]
+        if missing:
+            self._start_render_for_indices(missing)
+            return
+        if priority:
+            self._emit_progress("ready")
+
+    def _schedule_visible_render(self) -> None:
+        if self._visible_after is not None:
+            try:
+                self.after_cancel(self._visible_after)
+            except Exception:
+                pass
+        self._visible_after = self.after(40, self._on_visible_render_tick)
+
+    def _on_visible_render_tick(self) -> None:
+        self._visible_after = None
+        self._request_visible_pages()
 
     def _render_page(self, doc, index: int, zoom: float) -> dict:
         if fitz is None:
@@ -604,18 +757,20 @@ class PDFViewer(ttk.Frame):
         if token != self._load_token or Image is None or ImageTk is None:
             return
 
-        self._page_payloads[payload["index"]] = payload
+        index = payload["index"]
+        self._page_payloads[index] = payload
+        if index in self._page_view_by_index:
+            return
+
+        if index < 0 or index >= len(self._page_layouts):
+            return
+        layout = self._page_layouts[index]
 
         image = Image.open(io.BytesIO(payload["png"]))
         photo = ImageTk.PhotoImage(image, master=self.root)
         self._photos.append(photo)
-
-        y = _MARGIN_Y
-        if self._page_views:
-            previous = self._page_views[-1]
-            y = previous["y"] + previous["render_height"] + _PAGE_GAP
-
-        x = self._center_x(payload["render_width"])
+        x = layout["x"]
+        y = layout["y"]
         shadow = self._canvas.create_rectangle(
             x + 2,
             y + 2,
@@ -636,8 +791,8 @@ class PDFViewer(ttk.Frame):
         self._canvas.tag_lower(shadow, image_id)
         self._canvas.tag_raise(border, image_id)
 
-        self._page_views.append({
-            "index": payload["index"],
+        view = {
+            "index": index,
             "x": x,
             "y": y,
             "render_width": payload["render_width"],
@@ -645,18 +800,22 @@ class PDFViewer(ttk.Frame):
             "page_width": payload["page_width"],
             "page_height": payload["page_height"],
             "items": (shadow, image_id, border),
-        })
-        self._loaded_count = len(self._page_views)
-        self._recenter_pages()
+        }
+        self._page_view_by_index[index] = view
+        self._page_views = [self._page_view_by_index[k] for k in sorted(self._page_view_by_index)]
+        self._loaded_count = len(self._page_view_by_index)
+        self._restore_zoom_anchor_if_possible()
 
     def _on_mousewheel(self, event: tk.Event) -> str:
         units = self._wheel_units(event.delta)
         self._canvas.yview_scroll(units, "units")
+        self._schedule_visible_render()
         return "break"
 
     def _on_shift_mousewheel(self, event: tk.Event) -> str:
         units = self._wheel_units(event.delta)
         self._canvas.xview_scroll(units, "units")
+        self._schedule_visible_render()
         return "break"
 
     def _wheel_units(self, delta: int) -> int:
@@ -673,14 +832,106 @@ class PDFViewer(ttk.Frame):
             return "break"
         self._zoom = new_zoom
         self._status_cb(f"PDF zoom: {round(self._zoom * 100)}%")
-        if self._doc_path:
-            self.load_pdf(self._doc_path)
+        if self._doc is not None:
+            self._rerender_current_pdf()
         else:
             self.show_message(f"PDF zoom set to {round(self._zoom * 100)}%")
         return "break"
 
+    def _capture_zoom_anchor(self) -> dict | None:
+        if not self._page_views:
+            return None
+
+        viewport_w = max(self._canvas.winfo_width(), 1)
+        viewport_h = max(self._canvas.winfo_height(), 1)
+        anchor_x = self._canvas.canvasx(viewport_w / 2)
+        anchor_y = self._canvas.canvasy(viewport_h / 2)
+        x_frac = self._canvas.xview()[0] if self._canvas.xview() else 0.0
+        y_frac = self._canvas.yview()[0] if self._canvas.yview() else 0.0
+
+        for page in self._page_views:
+            px1 = page["x"]
+            py1 = page["y"]
+            px2 = px1 + page["render_width"]
+            py2 = py1 + page["render_height"]
+            if not (px1 <= anchor_x <= px2 and py1 <= anchor_y <= py2):
+                continue
+
+            rel_x = (anchor_x - px1) / max(page["render_width"], 1)
+            rel_y = (anchor_y - py1) / max(page["render_height"], 1)
+            rel_x = min(1.0, max(0.0, rel_x))
+            rel_y = min(1.0, max(0.0, rel_y))
+            return {
+                "page_index": page["index"],
+                "rel_x": rel_x,
+                "rel_y": rel_y,
+                "x_frac": x_frac,
+                "y_frac": y_frac,
+                "fallback_applied": False,
+            }
+
+        return {
+            "page_index": None,
+            "rel_x": 0.5,
+            "rel_y": 0.5,
+            "x_frac": x_frac,
+            "y_frac": y_frac,
+            "fallback_applied": False,
+        }
+
+    def _restore_zoom_anchor_if_possible(self) -> None:
+        anchor = self._pending_zoom_anchor
+        if anchor is None:
+            return
+
+        if not anchor.get("fallback_applied", False):
+            self._canvas.xview_moveto(min(1.0, max(0.0, anchor.get("x_frac", 0.0))))
+            self._canvas.yview_moveto(min(1.0, max(0.0, anchor.get("y_frac", 0.0))))
+            anchor["fallback_applied"] = True
+
+        page_index = anchor.get("page_index")
+        if page_index is None:
+            self._pending_zoom_anchor = None
+            return
+
+        page = next((p for p in self._page_views if p["index"] == page_index), None)
+        if page is None:
+            return
+
+        target_x = page["x"] + anchor["rel_x"] * page["render_width"]
+        target_y = page["y"] + anchor["rel_y"] * page["render_height"]
+        self._scroll_canvas_point_to_view_center(target_x, target_y)
+        self._pending_zoom_anchor = None
+
+    def _scroll_canvas_point_to_view_center(self, x: float, y: float) -> None:
+        self._canvas.update_idletasks()
+        viewport_w = max(self._canvas.winfo_width(), 1)
+        viewport_h = max(self._canvas.winfo_height(), 1)
+
+        region = self._canvas.cget("scrollregion")
+        if not region:
+            return
+        try:
+            left, top, right, bottom = [float(v) for v in str(region).split()]
+        except Exception:
+            return
+
+        total_w = max(right - left, 1.0)
+        total_h = max(bottom - top, 1.0)
+        max_x = max(total_w - viewport_w, 0.0)
+        max_y = max(total_h - viewport_h, 0.0)
+
+        desired_left = min(max(x - (viewport_w / 2), 0.0), max_x)
+        desired_top = min(max(y - (viewport_h / 2), 0.0), max_y)
+
+        x_frac = 0.0 if max_x <= 0 else desired_left / max_x
+        y_frac = 0.0 if max_y <= 0 else desired_top / max_y
+        self._canvas.xview_moveto(x_frac)
+        self._canvas.yview_moveto(y_frac)
+
     def _on_canvas_configure(self, event: tk.Event) -> None:
         self._recenter_pages()
+        self._schedule_visible_render()
 
     def _on_press(self, event: tk.Event) -> None:
         if self._doc is None:
@@ -795,12 +1046,12 @@ class PDFViewer(ttk.Frame):
                 message = f"{name} — no pages could be rendered"
             else:
                 message = (
-                    f"{name} — {self._loaded_count} / {self._page_count} page(s) ready"
+                    f"{name} — {self._loaded_count} / {self._page_count} page(s) rendered"
                     f"{suffix} at {round(self._zoom * 100)}%"
                 )
         else:
             message = (
-                f"Loading {name} — {self._loaded_count} / {self._page_count} "
+                f"Rendering {name} — {self._loaded_count} / {self._page_count} "
                 f"page(s){suffix} at {round(self._zoom * 100)}%"
             )
         self.show_message(message)
@@ -826,18 +1077,22 @@ class PDFViewer(ttk.Frame):
         return max(_MARGIN_X, (viewport_width - render_width) / 2)
 
     def _recenter_pages(self) -> None:
-        if not self._page_views:
+        if not self._page_layouts:
             return
         max_right = 0
-        max_width = max((page["render_width"] for page in self._page_views), default=0)
-        for page in self._page_views:
-            new_x = self._center_x(page["render_width"])
-            dx = new_x - page["x"]
+        max_width = max((page["render_width"] for page in self._page_layouts), default=0)
+        for layout in self._page_layouts:
+            index = layout["index"]
+            new_x = self._center_x(layout["render_width"])
+            dx = new_x - layout["x"]
             if abs(dx) > 0.01:
-                for item in page["items"]:
-                    self._canvas.move(item, dx, 0)
-                page["x"] = new_x
-            max_right = max(max_right, page["x"] + page["render_width"])
-        height = self._page_views[-1]["y"] + self._page_views[-1]["render_height"] + _MARGIN_Y
+                view = self._page_view_by_index.get(index)
+                if view is not None:
+                    for item in view["items"]:
+                        self._canvas.move(item, dx, 0)
+                    view["x"] = new_x
+                layout["x"] = new_x
+            max_right = max(max_right, layout["x"] + layout["render_width"])
+        height = self._page_layouts[-1]["y"] + self._page_layouts[-1]["render_height"] + _MARGIN_Y
         scroll_width = max(max_right + _MARGIN_X, max_width + (_MARGIN_X * 2))
         self._canvas.configure(scrollregion=(0, 0, scroll_width, height))

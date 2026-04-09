@@ -392,6 +392,7 @@ def bind_keys(
                 navigate_cb=main_frame.navigate_cb,
                 open_pdf_cb=open_pdf_cb,
                 open_image_cb=open_image_cb,
+                focus_main_cb=main_frame._tree.focus_set,
             )
             if _search_holder:
                 _search_holder[0] = dlg

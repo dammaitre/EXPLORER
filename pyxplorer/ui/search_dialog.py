@@ -46,12 +46,13 @@ class SearchDialog:
     """
 
     def __init__(self, root: tk.Tk, state, navigate_cb,
-                 open_pdf_cb=None, open_image_cb=None):
+                 open_pdf_cb=None, open_image_cb=None, focus_main_cb=None):
         self._root        = root
         self._state       = state
         self._navigate_cb = navigate_cb
         self._open_pdf_cb = open_pdf_cb
         self._open_image_cb = open_image_cb
+        self._focus_main_cb = focus_main_cb
         self._original_dir = normalize(state.current_dir)  # Capture original dir when dialog opens
 
         self._token:      CancelToken | None = None
@@ -217,6 +218,8 @@ class SearchDialog:
         self._dlg.bind("<Control-Alt-I>",    self._on_open_image)
         self._dlg.bind("<Control-h>",        self._on_run_heuristic_hotkey)
         self._dlg.bind("<Control-H>",        self._on_run_heuristic_hotkey)
+        self._dlg.bind("<Return>",           self._on_return_key)
+        self._dlg.bind("<Tab>",              self._on_tab_to_main)
 
         self._entry.focus_set()
 
@@ -509,6 +512,26 @@ class SearchDialog:
     def _on_down(self, event=None) -> str:
         return self._move_selection(+1)
 
+    def _on_return_key(self, event=None) -> str | None:
+        # Skip if the pattern entry is focused — don't interfere with typing.
+        try:
+            if self._dlg.focus_get() is self._entry:
+                return
+        except Exception:
+            pass
+        result = self._selected_result()
+        if not result:
+            return "break"
+        full_path, parent, ftype = result
+        self._navigate_cb(full_path if ftype == "dir" else parent)
+        self._dlg.lift()
+        return "break"
+
+    def _on_tab_to_main(self, event=None) -> str:
+        if self._focus_main_cb:
+            self._focus_main_cb()
+        return "break"
+
     def _on_open_pdf(self, event=None) -> str:
         if self._open_pdf_cb is None:
             return "break"
@@ -672,10 +695,7 @@ class SearchDialog:
 
     # Double-click / Enter — same as before: navigate (to dir or file's parent)
     def _on_double_click(self, event=None) -> None:
-        iid = self._focused_iid()
-        if not iid:
-            return
-        result = self._result_paths(iid)
+        result = self._selected_result()
         if not result:
             return
         full_path, parent, ftype = result
