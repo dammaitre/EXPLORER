@@ -276,12 +276,15 @@ class TempNotepad(ttk.Frame):
 
     def shutdown(self) -> None:
         self._cancel_autosave_loop()
-        self._save_now()
+        if self._loaded:
+            self._save_now()
         _release_lock(self._temp_path)
 
     def save_and_unlock(self) -> None:
         """Save content and release the lock (panel hide). Autosave keeps running.
         Next load() call will re-acquire the lock fresh."""
+        if not self._loaded:
+            return  # notepad was never opened — text widget is empty, don't overwrite
         self._save_now()
         _release_lock(self._temp_path)
         self._loaded = False   # force re-acquire on next open

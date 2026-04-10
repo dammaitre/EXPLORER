@@ -12,7 +12,7 @@ ensure_user_json_files()
 _SETTINGS_FILE = settings_json_path()
 
 _DEFAULTS: dict = {
-    "ext_skipped": [],
+    "expression_skipped": [],
     "scroll_speed": 1.0,
     "default_pdf_zoom": 1.5,
     "scan_skip_dirs": [],
@@ -132,17 +132,19 @@ def _load() -> dict:
         seen_skip_dirs.add(key)
         unique_skip_dirs.append(item)
 
-    # Normalise extensions: lowercase, ensure leading dot, deduplicate
-    ext_skipped: set[str] = set()
-    for e in raw.get("ext_skipped", _DEFAULTS["ext_skipped"]):
-        if isinstance(e, str) and e:
-            e = e.lower().strip()
-            ext_skipped.add(e if e.startswith(".") else f".{e}")
+    # Compile expression_skipped patterns (case-insensitive regex, skip invalid)
+    expr_skipped: list = []
+    for e in raw.get("expression_skipped", _DEFAULTS["expression_skipped"]):
+        if isinstance(e, str) and e.strip():
+            try:
+                expr_skipped.append(re.compile(e.strip(), re.IGNORECASE))
+            except re.error:
+                vprint(f"settings: invalid regex in expression_skipped, ignored: {e!r}")
     return {
         "theme": theme,
         "start_dirs": start_dirs,
         "scan_skip_dirs": unique_skip_dirs,
-        "ext_skipped": ext_skipped,
+        "expression_skipped": expr_skipped,
         "scroll_speed": scroll_speed,
         "default_pdf_zoom": default_pdf_zoom,
     }
@@ -153,18 +155,18 @@ _cfg = _load()
 THEME: dict       = _cfg["theme"]
 START_DIRS: list  = _cfg["start_dirs"]
 SCAN_SKIP_DIRS: list = _cfg["scan_skip_dirs"]
-EXT_SKIPPED: set  = _cfg["ext_skipped"]   # lowercase extensions with leading dot
+EXPR_SKIPPED: list = _cfg["expression_skipped"]   # compiled regex patterns for skipped filenames
 SCROLL_SPEED: float = _cfg["scroll_speed"]
 DEFAULT_PDF_ZOOM: float = _cfg["default_pdf_zoom"]
 
 
 def reload():
     """Reload settings from disk. Updates all module-level constants."""
-    global _cfg, THEME, START_DIRS, SCAN_SKIP_DIRS, EXT_SKIPPED, SCROLL_SPEED, DEFAULT_PDF_ZOOM
+    global _cfg, THEME, START_DIRS, SCAN_SKIP_DIRS, EXPR_SKIPPED, SCROLL_SPEED, DEFAULT_PDF_ZOOM
     _cfg = _load()
     THEME = _cfg["theme"]
     START_DIRS = _cfg["start_dirs"]
     SCAN_SKIP_DIRS = _cfg["scan_skip_dirs"]
-    EXT_SKIPPED = _cfg["ext_skipped"]
+    EXPR_SKIPPED = _cfg["expression_skipped"]
     SCROLL_SPEED = _cfg["scroll_speed"]
     DEFAULT_PDF_ZOOM = _cfg["default_pdf_zoom"]

@@ -19,7 +19,7 @@ import os
 import queue
 import threading
 from .longpath import normalize, to_display
-from ..settings import EXT_SKIPPED, SCAN_SKIP_DIRS
+from ..settings import EXPR_SKIPPED, SCAN_SKIP_DIRS
 
 
 class CancelToken:
@@ -161,14 +161,14 @@ class SizeScanner:
                         # to False here, so they are NOT recursed (cycle prevention).
                         total += self._dir_size(entry.path, token)
                     elif entry.is_file(follow_symlinks=False):
-                        # Regular file (not a symlink) — skip filtered extensions.
-                        if not EXT_SKIPPED or \
-                                os.path.splitext(entry.name)[1].lower() not in EXT_SKIPPED:
+                        # Regular file (not a symlink) — skip filtered expressions.
+                        if not EXPR_SKIPPED or \
+                                not any(p.search(entry.name) for p in EXPR_SKIPPED):
                             total += entry.stat().st_size
                     elif entry.is_symlink() and entry.is_file(follow_symlinks=True):
-                        # Symlink pointing to a file — same extension filter applies.
-                        if not EXT_SKIPPED or \
-                                os.path.splitext(entry.name)[1].lower() not in EXT_SKIPPED:
+                        # Symlink pointing to a file — same expression filter applies.
+                        if not EXPR_SKIPPED or \
+                                not any(p.search(entry.name) for p in EXPR_SKIPPED):
                             try:
                                 total += entry.stat(follow_symlinks=True).st_size
                             except OSError:

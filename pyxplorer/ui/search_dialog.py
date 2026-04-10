@@ -19,7 +19,7 @@ from ..core.scanner import CancelToken
 from ..core.search import search_names
 from ..core.fs import fmt_size
 from ..core.heuristics import list_heuristic_scripts, run_heuristic
-from ..settings import EXT_SKIPPED
+from ..settings import EXPR_SKIPPED
 from ..settings import THEME as _T
 from . import icons as _icons_mod
 from .scroll_utils import make_autohide_pack_setter
@@ -220,6 +220,7 @@ class SearchDialog:
         self._dlg.bind("<Control-H>",        self._on_run_heuristic_hotkey)
         self._dlg.bind("<Return>",           self._on_return_key)
         self._dlg.bind("<Tab>",              self._on_tab_to_main)
+        self._dlg.bind("<Escape>",           lambda _: self._on_close())
 
         self._entry.focus_set()
 
@@ -446,11 +447,11 @@ class SearchDialog:
                             if entry.is_dir(follow_symlinks=False):
                                 stack.append(entry.path)
                             elif entry.is_file(follow_symlinks=False):
-                                if EXT_SKIPPED and os.path.splitext(entry.name)[1].lower() in EXT_SKIPPED:
+                                if EXPR_SKIPPED and any(p.search(entry.name) for p in EXPR_SKIPPED):
                                     continue
                                 total += int(entry.stat(follow_symlinks=False).st_size)
                             elif entry.is_symlink() and entry.is_file(follow_symlinks=True):
-                                if EXT_SKIPPED and os.path.splitext(entry.name)[1].lower() in EXT_SKIPPED:
+                                if EXPR_SKIPPED and any(p.search(entry.name) for p in EXPR_SKIPPED):
                                     continue
                                 try:
                                     total += int(entry.stat(follow_symlinks=True).st_size)

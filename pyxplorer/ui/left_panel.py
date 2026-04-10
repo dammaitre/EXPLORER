@@ -86,15 +86,19 @@ class LeftPanel(ttk.Frame):
         self._starred_frame = tk.Frame(self, bg=_BG_PANEL)
         self._starred_frame.pack(side=tk.TOP, fill=tk.X)
 
+        self._starred_collapsed = True
+
         self._starred_label = tk.Label(
             self._starred_frame,
-            text="  ★ Starred",
+            text="  ▶ ★ Starred",
             bg=_BG_PANEL,
             fg=_ACCENT,
             font=(_FONT, _SZ, "bold"),
             anchor="w",
+            cursor="hand2",
         )
         self._starred_label.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
+        self._starred_label.bind("<Button-1>", self._toggle_starred_collapse)
 
         self._starred_list = tk.Listbox(
             self._starred_frame,
@@ -376,11 +380,17 @@ class LeftPanel(ttk.Frame):
         self._starred_render_after = None
         self._render_starred_labels()
 
+    def _toggle_starred_collapse(self, event=None) -> None:
+        self._starred_collapsed = not self._starred_collapsed
+        arrow = "▶" if self._starred_collapsed else "▼"
+        self._starred_label.configure(text=f"  {arrow} ★ Starred")
+        self.refresh_starred()
+
     def refresh_starred(self) -> None:
         """Rebuild the starred listbox from the persisted store."""
         self._starred_paths = list(_starred.all_starred())
         # Show/hide the listbox and separator dynamically
-        if self._starred_paths:
+        if self._starred_paths and not self._starred_collapsed:
             self._starred_list.configure(height=min(len(self._starred_paths), 8))
             self._starred_list.pack(side=tk.TOP, fill=tk.X, padx=4)
             self._starred_sep.pack(side=tk.TOP, fill=tk.X, pady=2)

@@ -45,7 +45,7 @@ _SETTINGS_TEMPLATE: dict = {
         "md_list_marker_color": "#60CDFF",
     },
     "start_dirs": [],
-    "ext_skipped": [],
+    "expression_skipped": [],
 }
 
 

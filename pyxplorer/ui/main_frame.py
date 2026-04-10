@@ -16,7 +16,7 @@ from ..core.longpath import normalize, to_display
 from ..core.fs import fmt_size, copy_items, move_items
 from ..core import starred as _starred
 from ..core import tags as _tags
-from ..settings import THEME as _T, EXT_SKIPPED, SCROLL_SPEED
+from ..settings import THEME as _T, EXPR_SKIPPED, SCROLL_SPEED
 from .scroll_utils import make_autohide_pack_setter
 
 try:
@@ -214,8 +214,8 @@ class MainFrame(ttk.Frame):
             })
 
         for entry in files:
-            if EXT_SKIPPED and \
-                    os.path.splitext(entry.name)[1].lower() in EXT_SKIPPED:
+            if EXPR_SKIPPED and \
+                    any(p.search(entry.name) for p in EXPR_SKIPPED):
                 continue
             try:
                 size = entry.stat(follow_symlinks=False).st_size
