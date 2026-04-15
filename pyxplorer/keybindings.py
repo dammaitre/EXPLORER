@@ -327,6 +327,9 @@ def bind_keys(
     pdf_page_down_cb=None,
     pdf_page_up_cb=None,
     pre_hide_lower_cb=None,
+    get_heuristics_win_cb=None,
+    lower_panel_visible_cb=None,
+    focus_lower_panel_cb=None,
 ) -> None:
     """Attach all application-wide shortcuts to the root window."""
 
@@ -404,47 +407,59 @@ def bind_keys(
 
     root.bind("<Control-f>", _guard(_open_search))
 
-    # ── Tab: toggle focus between main frame and sub-windows ─────────────
+    # ── Tab: toggle focus between main frame and sub-windows / lower panel ──
+    def _widget_in_toplevel(widget, toplevel) -> bool:
+        """Return True if widget is the given Toplevel or a descendant of it."""
+        try:
+            current = widget
+            while current is not None:
+                if current is toplevel:
+                    return True
+                current = getattr(current, "master", None)
+                if current is root:
+                    break
+        except Exception:
+            pass
+        return False
+
     def _on_tab(event=None) -> str:
-        """Tab: focus main frame if in sub-window, else focus search window if open."""
+        """Tab: cycle focus between main frame, open sub-windows, and lower panel."""
         try:
             focused = root.focus_get()
         except Exception:
             focused = None
 
-        # Check if focus is in a sub-window (search, heuristics, etc.)
-        in_subwindow = False
-        if _search_holder and _search_holder[0].alive:
-            search_dialog = _search_holder[0]
-            search_dlg = search_dialog._dlg
-            # Check if focused widget is within search dialog
-            if focused and search_dlg.winfo_exists():
-                try:
-                    # Walk up the widget hierarchy to see if focused is a child of search dialog
-                    current = focused
-                    while current:
-                        if current == search_dlg:
-                            in_subwindow = True
-                            break
-                        parent = current.master
-                        if parent is None or parent == root:
-                            break
-                        current = parent
-                except Exception:
-                    pass
-
-        # If in a sub-window, move focus to main frame
-        if in_subwindow:
-            main_frame._tree.focus_set()
-            return "break"
-
-        # If in main frame and search window exists, focus search window
-        if _search_holder and _search_holder[0].alive:
-            search_dialog = _search_holder[0]
-            search_dlg = search_dialog._dlg
+        # Priority 1 — search dialog
+        search_open = bool(_search_holder and _search_holder[0].alive)
+        if search_open:
+            search_dlg = _search_holder[0]._dlg
             if search_dlg.winfo_exists():
-                search_dialog._entry.focus_set()
+                if focused and _widget_in_toplevel(focused, search_dlg):
+                    main_frame._tree.focus_set()
+                else:
+                    _search_holder[0]._entry.focus_set()
                 return "break"
+
+        # Priority 2 — heuristics window
+        heuristics_win = get_heuristics_win_cb() if get_heuristics_win_cb else None
+        if heuristics_win and heuristics_win.alive:
+            heur_top = heuristics_win.win
+            if heur_top.winfo_exists():
+                if focused and _widget_in_toplevel(focused, heur_top):
+                    main_frame._tree.focus_set()
+                else:
+                    heur_top.focus_set()
+                return "break"
+
+        # Priority 3 — lower panel (only when visible)
+        if lower_panel_visible_cb and lower_panel_visible_cb():
+            if lower_panel_focus_cb and lower_panel_focus_cb():
+                # Focus is inside the lower panel → return to main frame
+                main_frame._tree.focus_set()
+            elif focus_lower_panel_cb:
+                # Focus is in main frame → move to lower panel
+                focus_lower_panel_cb()
+            return "break"
 
         return "break"
 

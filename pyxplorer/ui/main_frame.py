@@ -751,7 +751,9 @@ class MainFrame(ttk.Frame):
     def _open_file(self, path: str) -> None:
         """Open a file with the OS default application (like double-clicking in Explorer)."""
         try:
-            os.startfile(normalize(path))
+            # to_display strips the \\?\ prefix: ShellExecuteW (used by os.startfile)
+            # does not support extended-length paths and can crash shell extension DLLs.
+            os.startfile(to_display(path))
         except AttributeError:
             # os.startfile is Windows-only; fall back to xdg-open / open on other platforms
             try:

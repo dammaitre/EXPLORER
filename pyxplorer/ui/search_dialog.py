@@ -5,6 +5,8 @@ Opens a Toplevel with a pattern Entry and an incremental result Treeview.
 Search runs in a daemon thread using the same CancelToken pattern as the
 size scanner. Results stream in via a queue polled every 100 ms.
 """
+import html as _html_mod
+import importlib
 import os
 import re
 import sys
@@ -12,6 +14,7 @@ import queue
 import subprocess
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk
 
 from ..core.longpath import normalize, to_display
@@ -68,7 +71,13 @@ class SearchDialog:
         self._size_worker_stop = threading.Event()
         self._size_worker = threading.Thread(target=self._size_worker_loop, daemon=True)
         self._size_worker.start()
-        
+
+        self._match_content_var = tk.BooleanVar(value=False)
+        self._content_token: int = 0
+        self._current_pattern: str = ""
+        self._snippet_chars: int = 60
+        self._result_by_path: dict[str, str] = {}   # normalize(path) → iid, for dedup
+
         # Search scope: "current" (default) | "selected" | "original"
         self._search_scope = tk.StringVar(value="current")
         self._current_search_root = self._original_dir  # Default to original dir at start
@@ -151,6 +160,13 @@ class SearchDialog:
             command=self._on_scope_changed,
         ).pack(side=tk.LEFT, padx=(12, 0))
 
+        ttk.Checkbutton(
+            scope_row,
+            text="Match PDF content",
+            variable=self._match_content_var,
+            command=self._on_scope_changed,
+        ).pack(side=tk.LEFT, padx=(12, 0))
+
         # ── Status bar ───────────────────────────────────────────────────
         self._status_var = tk.StringVar(value="Type a regex pattern…")
         ttk.Label(
@@ -187,6 +203,16 @@ class SearchDialog:
             "empty_dir",
             foreground=TEXT_M,
             font=(_FONT, _SZ, "bold"),
+        )
+        self._tree.tag_configure(
+            "content_match",
+            foreground=TEXT_M,
+            font=("Consolas", _SZ_S),
+        )
+        self._tree.tag_configure(
+            "content_match_more",
+            foreground=TEXT_M,
+            font=(_FONT, _SZ_S, "italic"),
         )
 
         vsb = ttk.Scrollbar(tree_outer, orient="vertical",
@@ -300,8 +326,18 @@ class SearchDialog:
         self._token = CancelToken()
         self._size_token += 1
         self._heuristic_token += 1
+        self._content_token += 1
+        self._current_pattern = pattern
+        # Capture snippet char width from path column at search start (UI thread)
+        try:
+            f = tkfont.Font(family=_FONT, size=_SZ)
+            avg_w = max(1, f.measure("n"))
+            self._snippet_chars = max(40, self._tree.column("path", "width") // avg_w)
+        except Exception:
+            self._snippet_chars = 60
         self._tree.delete(*self._tree.get_children())
         self._result_meta.clear()
+        self._result_by_path.clear()
         self._tree.heading("heur", text="")
         self._tree.column("heur", width=0, stretch=False, minwidth=0, anchor="w")
         self._status_var.set("Searching…")
@@ -312,6 +348,15 @@ class SearchDialog:
             args=(search_root, pattern, self._queue, self._token, max_results),
             daemon=True,
         ).start()
+
+        if self._match_content_var.get():
+            tok = self._content_token
+            sc  = self._snippet_chars
+            threading.Thread(
+                target=self._content_search_all,
+                args=(search_root, pattern, tok, sc),
+                daemon=True,
+            ).start()
 
     # ------------------------------------------------------------------
     # Queue polling
@@ -324,7 +369,10 @@ class SearchDialog:
     def _poll(self) -> None:
         try:
             while True:
-                msg = self._queue.get_nowait()
+                try:
+                    msg = self._queue.get_nowait()
+                except queue.Empty:
+                    break
                 kind = msg[0]
 
                 if kind == "search_result":
@@ -337,12 +385,16 @@ class SearchDialog:
                     else:
                         size_str, size_bytes = "—", -1
 
+                    # Skip if content walker already created a row for this path
+                    if full_path in self._result_by_path:
+                        continue
+
                     icon = self._icons.get("folder" if ftype == "dir" else "file")
                     iid = self._tree.insert(
                         "",
                         "end",
                         text=name,
-                        image=icon,
+                        image=icon or "",
                         values=(parent_rel, size_str, ""),
                         tags=("dir" if ftype == "dir" else "file",),
                     )
@@ -352,6 +404,7 @@ class SearchDialog:
                         "ftype": ftype,
                         "size_bytes": size_bytes,
                     }
+                    self._result_by_path[full_path] = iid
                     if ftype == "dir":
                         self._size_tasks.put((self._size_token, iid, full_path))
 
@@ -387,11 +440,15 @@ class SearchDialog:
                 elif kind == "search_done":
                     truncated = bool(msg[1]) if len(msg) > 1 else False
                     n = len(self._tree.get_children())
+                    content_running = self._match_content_var.get()
                     if n:
                         if truncated:
                             self._status_var.set(f"Showing first {n} result(s) (limit reached).")
                         else:
-                            self._status_var.set(f"{n} result(s) found.")
+                            suffix = " — scanning PDF content…" if content_running else ""
+                            self._status_var.set(f"{n} result(s) found.{suffix}")
+                    elif content_running:
+                        self._status_var.set("No filename matches — scanning PDF content…")
                     else:
                         self._status_var.set("No results.")
                     self._token = None
@@ -400,7 +457,62 @@ class SearchDialog:
                     self._status_var.set(f"Search error: {msg[1]}")
                     self._token = None
 
-        except queue.Empty:
+                elif kind == "pdf_content_result":
+                    _, token, name, rel, full_path, snippets, total = msg
+                    if token != self._content_token:
+                        continue
+                    # Get existing row (name-search may have already created it)
+                    iid = self._result_by_path.get(full_path)
+                    if not iid or not self._tree.exists(iid):
+                        # Content-only match — create the file row
+                        parent_rel = os.path.dirname(rel) if rel else ""
+                        size_str, size_bytes = self._file_size_display(full_path)
+                        icon = self._icons.get("file")
+                        iid = self._tree.insert(
+                            "", "end",
+                            text=name,
+                            image=icon or "",
+                            values=(parent_rel, size_str, ""),
+                            tags=("file",),
+                        )
+                        self._result_meta[iid] = {
+                            "full_path": full_path,
+                            "parent": os.path.dirname(full_path),
+                            "ftype": "file",
+                            "size_bytes": size_bytes,
+                        }
+                        self._result_by_path[full_path] = iid
+                        n = len(self._tree.get_children())
+                        self._status_var.set(f"{n} result(s) so far…")
+                    # Add content sub-rows
+                    for snippet in snippets:
+                        self._tree.insert(
+                            iid, "end",
+                            text="",
+                            values=("  " + snippet, "", ""),
+                            tags=("content_match",),
+                        )
+                    if total > len(snippets):
+                        self._tree.insert(
+                            iid, "end",
+                            text="",
+                            values=(f"  (and {total - len(snippets)} more)", "", ""),
+                            tags=("content_match_more",),
+                        )
+                    if snippets:
+                        self._tree.item(iid, open=True)
+
+                elif kind == "content_search_done":
+                    _, token, hits = msg
+                    if token != self._content_token:
+                        continue
+                    n = len(self._tree.get_children())
+                    if n:
+                        self._status_var.set(f"{n} result(s) found ({hits} PDF content match(es)).")
+                    else:
+                        self._status_var.set("No results.")
+
+        except Exception:
             pass
 
         self._schedule_poll()
@@ -737,6 +849,79 @@ class SearchDialog:
             pass
 
     # ------------------------------------------------------------------
+    # PDF content search
+    # ------------------------------------------------------------------
+
+    def _content_search_all(self, root_dir: str, pattern: str,
+                             token_snap: int, snippet_chars: int) -> None:
+        """Walk root_dir, search every PDF's content, push pdf_content_result messages."""
+        content_hits = 0
+        for dirpath, _, filenames in os.walk(normalize(root_dir)):
+            if self._content_token != token_snap:
+                return
+            for name in filenames:
+                if self._content_token != token_snap:
+                    return
+                if not name.lower().endswith(".pdf"):
+                    continue
+                full = normalize(os.path.join(dirpath, name))
+                snippets, total = self._search_pdf_content(full, pattern, snippet_chars)
+                if total == 0:
+                    continue
+                if self._content_token != token_snap:
+                    return
+                content_hits += 1
+                rel = os.path.relpath(full, root_dir)
+                self._queue.put(("pdf_content_result", token_snap,
+                                 name, rel, full, snippets, total))
+        if self._content_token == token_snap:
+            self._queue.put(("content_search_done", token_snap, content_hits))
+
+    @staticmethod
+    def _page_text(page) -> str:
+        """Extract plain text from a fitz page using xhtml mode.
+
+        get_text("text") silently replaces many accented characters (é, â, î…)
+        with U+FFFD when the PDF lacks a proper ToUnicode table.
+        get_text("xhtml") goes through a different code path that maps glyph
+        names correctly; we strip the HTML tags afterwards.
+        """
+        xhtml = page.get_text("xhtml")
+        # Replace block-closing tags with newlines before stripping
+        s = re.sub(r'</p>|</div>|<br[^>]*/?>', '\n', xhtml, flags=re.IGNORECASE)
+        s = re.sub(r'<[^>]+>', '', s)          # strip remaining tags
+        return _html_mod.unescape(s)            # decode &amp; &#xe2; etc.
+
+    @staticmethod
+    def _search_pdf_content(path: str, pattern: str, snippet_chars: int) -> tuple[list[str], int]:
+        try:
+            fitz_mod = importlib.import_module("fitz")
+        except ImportError:
+            return [], 0
+        try:
+            rx = re.compile(pattern, re.IGNORECASE)
+            doc = fitz_mod.open(normalize(path))
+            snippets: list[str] = []
+            total = 0
+            ctx_before = max(10, snippet_chars // 3)
+            ctx_after  = max(10, snippet_chars // 2)
+            for page_num, page in enumerate(doc, 1):
+                text = SearchDialog._page_text(page)
+                for m in rx.finditer(text):
+                    total += 1
+                    if len(snippets) < 5:
+                        start = max(0, m.start() - ctx_before)
+                        end   = min(len(text), m.end() + ctx_after)
+                        raw   = text[start:end].replace("\n", " ").strip()
+                        if len(raw) > snippet_chars:
+                            raw = raw[:snippet_chars] + "…"
+                        snippets.append(f"p.{page_num}: …{raw}…")
+            doc.close()
+            return snippets, total
+        except Exception:
+            return [], 0
+
+    # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
 
@@ -745,8 +930,10 @@ class SearchDialog:
             self._token.cancel()
         self._size_token += 1
         self._heuristic_token += 1
+        self._content_token += 1
         self._size_worker_stop.set()
         self._size_tasks.put(None)
+        # _content_token increment above is sufficient to cancel the content walker thread
         if self._heuristic_picker and self._heuristic_picker.winfo_exists():
             try:
                 self._heuristic_picker.destroy()

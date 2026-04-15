@@ -298,6 +298,9 @@ class App:
             pdf_page_down_cb=self.lower_panel._pdf_viewer.page_down,
             pdf_page_up_cb=self.lower_panel._pdf_viewer.page_up,
             pre_hide_lower_cb=self.lower_panel._notes.save_and_unlock,
+            get_heuristics_win_cb=lambda: self._heuristics_win,
+            lower_panel_visible_cb=lambda: self._lower_visible,
+            focus_lower_panel_cb=self.lower_panel.focus_active_tab,
         )
         self.status_bar.set_status(_runtime_capabilities_message(self._dnd_enabled))
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -564,6 +567,8 @@ class App:
 
     def _on_selection_change(self, n_selected: int, sel_size: int) -> None:
         self.status_bar.update_selection(n_selected, sel_size)
+        if self._lower_visible:
+            self.lower_panel.on_file_selection_changed(list(self.state.selection))
 
     # ------------------------------------------------------------------
     # Entry point

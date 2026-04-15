@@ -5,7 +5,8 @@
       "Bash(python -c \":*)",
       "Bash(python -c \"import app; print\\(''OK''\\)\")",
       "Bash(python -c \"from pyxplorer.ui.search_dialog import SearchDialog; print\\(''OK''\\)\")",
-      "Bash(python -c \"from pyxplorer.keybindings import bind_keys; print\\(''OK''\\)\")"
+      "Bash(python -c \"from pyxplorer.keybindings import bind_keys; print\\(''OK''\\)\")",
+      "Bash(python -)"
     ]
   }
 }

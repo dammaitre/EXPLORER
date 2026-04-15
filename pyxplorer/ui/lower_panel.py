@@ -6,7 +6,7 @@ from typing import Any
 from ..core.longpath import normalize, to_display
 from ..settings import THEME as _T
 from .embedded_terminal import EmbeddedTerminal
-from .image_viewer import ImageViewer
+from .image_viewer import ImageViewer, _IMAGE_EXTS
 from .pdf_viewer import PDFViewer
 from .temp_notepad import TempNotepad
 
@@ -126,6 +126,39 @@ class LowerPanel(ttk.Frame):
             return str(focused).startswith(str(self))
         except Exception:
             return False
+
+    @property
+    def follow_pdf_selection(self) -> bool:
+        return self._pdf_viewer.follow_selection
+
+    def on_file_selection_changed(self, paths: list[str]) -> None:
+        """Called whenever the main-frame selection changes.
+
+        Auto-loads the selected file into the active viewer when 'Follow
+        selection' is enabled for that viewer.
+        """
+        if len(paths) != 1:
+            return
+        path = paths[0]
+        norm = normalize(path)
+        if os.path.isdir(norm):
+            return
+
+        if self.active_tab == "pdf" and self._pdf_viewer.follow_selection:
+            if not norm.lower().endswith(".pdf"):
+                return
+            if self._pdf_viewer._doc_path and os.path.normcase(self._pdf_viewer._doc_path) == os.path.normcase(norm):
+                return
+            self._title_var.set(f"PDF viewer — {os.path.basename(to_display(norm))}")
+            self._pdf_viewer.load_pdf(norm)
+
+        elif self.active_tab == "image" and self._image_viewer.follow_selection:
+            if os.path.splitext(norm)[1].lower() not in _IMAGE_EXTS:
+                return
+            if self._image_viewer._path and os.path.normcase(self._image_viewer._path) == os.path.normcase(norm):
+                return
+            self._title_var.set(f"Image viewer — {os.path.basename(to_display(norm))}")
+            self._image_viewer.load_image(norm)
 
     def request_pdf(self) -> None:
         self.show_tab("pdf")

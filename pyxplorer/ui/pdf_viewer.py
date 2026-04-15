@@ -96,14 +96,26 @@ class PDFViewer(ttk.Frame):
 
     def _build(self) -> None:
         self._message_var = tk.StringVar(value="")
+        self._follow_selection = tk.BooleanVar(value=False)
+
+        top_bar = ttk.Frame(self, style="LowerContent.TFrame")
+        top_bar.pack(side=tk.TOP, fill=tk.X)
+
         ttk.Label(
-            self,
+            top_bar,
             textvariable=self._message_var,
             anchor="w",
             font=(_FONT, _SZ_S),
             foreground=_TEXT_MUTE,
             padding=(12, 8),
-        ).pack(side=tk.TOP, fill=tk.X)
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        ttk.Checkbutton(
+            top_bar,
+            text="Follow selection",
+            variable=self._follow_selection,
+            style="TCheckbutton",
+        ).pack(side=tk.RIGHT, padx=(0, 12))
 
         viewport = ttk.Frame(self, style="LowerContent.TFrame")
         viewport.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -140,6 +152,10 @@ class PDFViewer(ttk.Frame):
         self._canvas.bind("<Next>",      self._on_page_down)
         self._canvas.bind("<Prior>",     self._on_page_up)
         self._canvas.bind("<Configure>", self._on_canvas_configure)
+
+    @property
+    def follow_selection(self) -> bool:
+        return self._follow_selection.get()
 
     def focus_viewer(self) -> None:
         self._canvas.focus_set()

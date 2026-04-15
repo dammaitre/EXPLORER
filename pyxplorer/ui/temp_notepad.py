@@ -94,6 +94,9 @@ _SAVE_DELAY_MS         = 250
 _AUTO_SAVE_INTERVAL_MS = 10_000
 _HIGHLIGHT_DELAY_MS    = 60   # debounce for typing
 
+_NEW_FILE_LABEL = "+ New markdown file"
+_MD_STRIP_RE    = re.compile(r'[#*_`\[\]()\->~!]')
+
 
 # ── Inline rules ──────────────────────────────────────────────────────────────
 # Each entry: (tag, pattern, marker_ranges_fn)
@@ -141,9 +144,11 @@ class TempNotepad(ttk.Frame):
         self._save_after:       str | None = None
         self._autosave_after:   str | None = None
         self._highlight_after:  str | None = None
-        self._temp_path = self._build_temp_path()
-        self._loaded:    bool = False
-        self._readonly:  bool = False
+        self._notepad_dir: Path = pyxplorer_data_dir() / "notepad"
+        self._temp_path: Path   = self._notepad_dir / "notepad.md"
+        self._loaded:    bool   = False
+        self._readonly:  bool   = False
+        self._combo_files: list = []   # list[Path | None] — None = "new file" sentinel
 
         self._build()
 
@@ -157,15 +162,24 @@ class TempNotepad(ttk.Frame):
         header = ttk.Frame(self, style="LowerContent.TFrame")
         header.pack(side=tk.TOP, fill=tk.X)
 
-        self._title_var = tk.StringVar(value="Markdown notes")
         ttk.Label(
             header,
-            textvariable=self._title_var,
+            text="Notes:",
             anchor="w",
             font=(_FONT, _SZ_S),
             foreground=_TEXT_MUTE,
-            padding=(12, 8),
+            padding=(12, 6, 6, 6),
         ).pack(side=tk.LEFT)
+
+        self._file_combo = ttk.Combobox(
+            header,
+            state="readonly",
+            font=(_FONT, _SZ_S),
+            width=44,
+            postcommand=self._rebuild_combo_values,
+        )
+        self._file_combo.pack(side=tk.LEFT, padx=(0, 12), pady=4)
+        self._file_combo.bind("<<ComboboxSelected>>", self._on_file_select)
 
         body = ttk.Frame(self, style="LowerContent.TFrame")
         body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -242,37 +256,24 @@ class TempNotepad(ttk.Frame):
             self._text.focus_set()
             return
 
-        self._temp_path.parent.mkdir(parents=True, exist_ok=True)
+        self._migrate_if_needed()
+        self._notepad_dir.mkdir(parents=True, exist_ok=True)
+
+        # If the current target no longer exists, pick the most recently modified file
+        # or create the default. (_temp_path is preserved across save_and_unlock so the
+        # user lands back on the same file when re-opening the panel.)
+        if not self._temp_path.exists():
+            files = sorted(
+                self._notepad_dir.glob("*.md"),
+                key=lambda f: -f.stat().st_mtime,
+            )
+            self._temp_path = files[0] if files else self._notepad_dir / "notepad.md"
+
         if not self._temp_path.exists():
             self._temp_path.write_text("", encoding="utf-8")
 
-        try:
-            text = self._temp_path.read_text(encoding="utf-8")
-        except Exception as exc:
-            self._status_cb(f"Notes read error: {exc}")
-            text = ""
-
-        # Try to acquire the lock; fall back to read-only if another instance holds it
-        if _try_acquire_lock(self._temp_path):
-            self._readonly = False
-            self._text.configure(state="normal")
-            title_suffix = ""
-        else:
-            self._readonly = True
-            title_suffix = "  [read-only — locked by another instance]"
-            self._status_cb("Notepad is read-only: locked by another running instance")
-
-        self._text.delete("1.0", tk.END)
-        self._text.insert("1.0", text)
-        if self._readonly:
-            self._text.configure(state="disabled")
-        self._rehighlight()
-        self._title_var.set(f"Markdown notes — {self._temp_path}{title_suffix}")
-        if not self._readonly:
-            self._status_cb(f"Notes loaded: {self._temp_path}")
-        self._loaded = True
-        self._text.focus_set()
-        self._schedule_autosave_loop()
+        self._refresh_combo()
+        self._load_file()
 
     def shutdown(self) -> None:
         self._cancel_autosave_loop()
@@ -282,7 +283,7 @@ class TempNotepad(ttk.Frame):
 
     def save_and_unlock(self) -> None:
         """Save content and release the lock (panel hide). Autosave keeps running.
-        Next load() call will re-acquire the lock fresh."""
+        Next load() call will re-acquire the lock fresh on the same file."""
         if not self._loaded:
             return  # notepad was never opened — text widget is empty, don't overwrite
         self._save_now()
@@ -292,18 +293,152 @@ class TempNotepad(ttk.Frame):
     def focus_editor(self) -> None:
         self._text.focus_set()
 
+    # ── File management ───────────────────────────────────────────────────────
+
+    def _migrate_if_needed(self) -> None:
+        """Move legacy notepad.md from the data root into the notepad/ sub-directory."""
+        old = pyxplorer_data_dir() / "notepad.md"
+        if not old.exists():
+            return
+        self._notepad_dir.mkdir(parents=True, exist_ok=True)
+        target = self._notepad_dir / "notepad.md"
+        if not target.exists():
+            try:
+                old.rename(target)
+            except OSError:
+                pass
+        # Clean up stale lock regardless
+        for stale in (
+            pyxplorer_data_dir() / "notepad.md.lock",
+            pyxplorer_data_dir() / "notepad.md" ,  # failed rename — remove orphan
+        ):
+            if stale.exists() and stale != target:
+                try:
+                    stale.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _load_file(self) -> None:
+        """Load self._temp_path into the text widget and acquire its lock."""
+        if not self._temp_path.exists():
+            self._temp_path.write_text("", encoding="utf-8")
+
+        try:
+            text = self._temp_path.read_text(encoding="utf-8")
+        except Exception as exc:
+            self._status_cb(f"Notes read error: {exc}")
+            text = ""
+
+        if _try_acquire_lock(self._temp_path):
+            self._readonly = False
+        else:
+            self._readonly = True
+            self._status_cb("Notepad is read-only: locked by another running instance")
+
+        self._text.configure(state="normal")
+        self._text.delete("1.0", tk.END)
+        self._text.insert("1.0", text)
+        if self._readonly:
+            self._text.configure(state="disabled")
+        self._rehighlight()
+        self._refresh_combo()
+        self._loaded = True
+        self._text.focus_set()
+        self._schedule_autosave_loop()
+        if not self._readonly:
+            self._status_cb(f"Notes loaded: {self._temp_path}")
+
+    def _file_label(self, path: Path) -> str:
+        """Return a display name derived from the file's first non-empty line."""
+        try:
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                first_line = fh.readline().rstrip("\n")
+            clean = _MD_STRIP_RE.sub("", first_line).strip()
+            return clean or path.stem
+        except Exception:
+            return path.stem
+
+    def _rebuild_combo_values(self) -> None:
+        """Refresh values list only — safe to use as postcommand (no current() call).
+        Also applies dark theme to the popup Listbox on first open."""
+        self._notepad_dir.mkdir(parents=True, exist_ok=True)
+        files = sorted(self._notepad_dir.glob("*.md"), key=lambda f: f.name)
+        self._combo_files = [None] + list(files)
+        self._file_combo["values"] = [_NEW_FILE_LABEL] + [self._file_label(f) for f in files]
+        self._style_combo_popup()
+
+    def _style_combo_popup(self) -> None:
+        """Dark-theme the popup Listbox by reaching into the tcl widget hierarchy."""
+        try:
+            popdown = self._file_combo.tk.call(
+                "ttk::combobox::PopdownWindow", self._file_combo
+            )
+            lb = self._file_combo.nametowidget(f"{popdown}.f.l")
+            lb.configure(
+                background=_BG_DARK,
+                foreground=_TEXT,
+                selectbackground=_T.get("row_selected", "#3D3D3D"),
+                selectforeground=_TEXT,
+                font=(_FONT, _SZ_S),
+            )
+        except Exception:
+            pass
+
+    def _refresh_combo(self) -> None:
+        """Rebuild values and sync the displayed selection to the active file."""
+        self._rebuild_combo_values()
+        files = [f for f in self._combo_files if f is not None]
+        try:
+            idx = files.index(self._temp_path) + 1
+        except ValueError:
+            idx = 0
+        self._file_combo.current(idx)
+
+    def _next_new_file(self) -> Path:
+        existing = {f.stem for f in self._notepad_dir.glob("*.md")}
+        i = 1
+        while f"note_{i}" in existing:
+            i += 1
+        return self._notepad_dir / f"note_{i}.md"
+
+    # ── File selector ─────────────────────────────────────────────────────────
+
+    def _on_file_select(self, event=None) -> None:
+        idx = self._file_combo.current()
+        if idx < 0 or idx >= len(self._combo_files):
+            return
+
+        chosen = self._combo_files[idx]
+
+        # No-op when re-selecting the currently loaded file
+        if chosen is not None and chosen == self._temp_path and self._loaded:
+            self._text.focus_set()
+            return
+
+        # Save and release the current file
+        if self._loaded:
+            self._save_now()
+            _release_lock(self._temp_path)
+            self._loaded = False
+            self._cancel_autosave_loop()
+
+        if chosen is None:
+            new_path = self._next_new_file()
+            new_path.write_text("", encoding="utf-8")
+            self._temp_path = new_path
+        else:
+            self._temp_path = chosen
+
+        self._text.configure(state="normal")
+        self._load_file()
+
     # ── Event handlers ────────────────────────────────────────────────────────
 
     def _on_key_release(self, event=None) -> None:  # noqa: ARG002
-        # All key releases: schedule highlight (debounced) + save (debounced).
-        # Arrow / Home / End etc. don't modify content, so save just rewrites same bytes —
-        # acceptable; we avoid a keysym whitelist that would need constant maintenance.
         self._schedule_highlight(delay=_HIGHLIGHT_DELAY_MS)
         self._schedule_save()
 
     def _on_click(self, event=None) -> None:  # noqa: ARG002
-        # Mouse click moves cursor without modifying text → update immediately so
-        # the newly active line uncleans without a visible delay.
         self._schedule_highlight(delay=0)
 
     # ── Save / autosave ───────────────────────────────────────────────────────
@@ -345,7 +480,7 @@ class TempNotepad(ttk.Frame):
                     self._rehighlight()
                 except Exception:
                     pass
-                self._title_var.set(f"Markdown notes — {self._temp_path}")
+                self._refresh_combo()
                 self._status_cb("Notepad lock acquired — now editable")
         else:
             self._save_now()
@@ -360,6 +495,7 @@ class TempNotepad(ttk.Frame):
         try:
             self._temp_path.write_text(text, encoding="utf-8")
             self._status_cb(f"Document saved: {time.strftime('%H:%M:%S')}")
+            self._refresh_combo()  # update display name in case first line changed
         except Exception as exc:
             self._status_cb(f"Notes write error: {exc}")
 
@@ -509,9 +645,3 @@ class TempNotepad(ttk.Frame):
         self._text.mark_set("insert", "1.0")
         self._text.see("insert")
         return "break"
-
-    # ── Path ─────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _build_temp_path() -> Path:
-        return pyxplorer_data_dir() / "notepad.md"
