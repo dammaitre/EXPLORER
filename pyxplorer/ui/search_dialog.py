@@ -5,8 +5,6 @@ Opens a Toplevel with a pattern Entry and an incremental result Treeview.
 Search runs in a daemon thread using the same CancelToken pattern as the
 size scanner. Results stream in via a queue polled every 100 ms.
 """
-import html as _html_mod
-import importlib
 import os
 import re
 import sys
@@ -854,72 +852,66 @@ class SearchDialog:
 
     def _content_search_all(self, root_dir: str, pattern: str,
                              token_snap: int, snippet_chars: int) -> None:
-        """Walk root_dir, search every PDF's content, push pdf_content_result messages."""
-        content_hits = 0
+        """Walk root_dir, search every PDF's content, push pdf_content_result messages.
+
+        PDF parsing runs in a ProcessPoolExecutor so fitz's GIL-holding C code
+        does not stall the tkinter main thread.  Two phases:
+          1. Walk the tree and collect PDF paths (fast, no parsing).
+          2. Submit all PDFs to the process pool and stream results as they
+             complete, so the UI stays responsive throughout.
+        """
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        from ..core.search import parse_pdf_content
+
+        # Phase 1 — fast directory walk, no PDF I/O
+        pdf_tasks: list[tuple[str, str, str]] = []  # (name, rel, full)
         for dirpath, _, filenames in os.walk(normalize(root_dir)):
             if self._content_token != token_snap:
                 return
             for name in filenames:
                 if self._content_token != token_snap:
                     return
-                if not name.lower().endswith(".pdf"):
-                    continue
-                full = normalize(os.path.join(dirpath, name))
-                snippets, total = self._search_pdf_content(full, pattern, snippet_chars)
-                if total == 0:
-                    continue
+                if name.lower().endswith(".pdf"):
+                    full = normalize(os.path.join(dirpath, name))
+                    rel  = os.path.relpath(full, root_dir)
+                    pdf_tasks.append((name, rel, full))
+
+        if not pdf_tasks:
+            if self._content_token == token_snap:
+                self._queue.put(("content_search_done", token_snap, 0))
+            return
+
+        if self._content_token != token_snap:
+            return
+
+        # Phase 2 — parse PDFs in parallel subprocesses
+        n_workers = min(4, max(1, os.cpu_count() or 2), len(pdf_tasks))
+        content_hits = 0
+        pool = ProcessPoolExecutor(max_workers=n_workers)
+        futures = {
+            pool.submit(parse_pdf_content, full, pattern, snippet_chars): (name, rel, full)
+            for name, rel, full in pdf_tasks
+        }
+
+        try:
+            for fut in as_completed(futures):
                 if self._content_token != token_snap:
                     return
+                name, rel, full = futures[fut]
+                try:
+                    snippets, total = fut.result()
+                except Exception:
+                    continue
+                if total == 0:
+                    continue
                 content_hits += 1
-                rel = os.path.relpath(full, root_dir)
                 self._queue.put(("pdf_content_result", token_snap,
                                  name, rel, full, snippets, total))
-        if self._content_token == token_snap:
-            self._queue.put(("content_search_done", token_snap, content_hits))
 
-    @staticmethod
-    def _page_text(page) -> str:
-        """Extract plain text from a fitz page using xhtml mode.
-
-        get_text("text") silently replaces many accented characters (é, â, î…)
-        with U+FFFD when the PDF lacks a proper ToUnicode table.
-        get_text("xhtml") goes through a different code path that maps glyph
-        names correctly; we strip the HTML tags afterwards.
-        """
-        xhtml = page.get_text("xhtml")
-        # Replace block-closing tags with newlines before stripping
-        s = re.sub(r'</p>|</div>|<br[^>]*/?>', '\n', xhtml, flags=re.IGNORECASE)
-        s = re.sub(r'<[^>]+>', '', s)          # strip remaining tags
-        return _html_mod.unescape(s)            # decode &amp; &#xe2; etc.
-
-    @staticmethod
-    def _search_pdf_content(path: str, pattern: str, snippet_chars: int) -> tuple[list[str], int]:
-        try:
-            fitz_mod = importlib.import_module("fitz")
-        except ImportError:
-            return [], 0
-        try:
-            rx = re.compile(pattern, re.IGNORECASE)
-            doc = fitz_mod.open(normalize(path))
-            snippets: list[str] = []
-            total = 0
-            ctx_before = max(10, snippet_chars // 3)
-            ctx_after  = max(10, snippet_chars // 2)
-            for page_num, page in enumerate(doc, 1):
-                text = SearchDialog._page_text(page)
-                for m in rx.finditer(text):
-                    total += 1
-                    if len(snippets) < 5:
-                        start = max(0, m.start() - ctx_before)
-                        end   = min(len(text), m.end() + ctx_after)
-                        raw   = text[start:end].replace("\n", " ").strip()
-                        if len(raw) > snippet_chars:
-                            raw = raw[:snippet_chars] + "…"
-                        snippets.append(f"p.{page_num}: …{raw}…")
-            doc.close()
-            return snippets, total
-        except Exception:
-            return [], 0
+            if self._content_token == token_snap:
+                self._queue.put(("content_search_done", token_snap, content_hits))
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     # ------------------------------------------------------------------
     # Cleanup

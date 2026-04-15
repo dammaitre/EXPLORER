@@ -1,10 +1,51 @@
 """
 Regex search across file/dir names. Stub — Phase 7 will wire this to the UI.
 """
+import html as _html
+import importlib
 import os
 import re
 import queue
 from .longpath import normalize
+
+
+def parse_pdf_content(path: str, pattern: str, snippet_chars: int) -> tuple[list[str], int]:
+    """Parse a single PDF and return (snippets, total_matches).
+
+    Designed to run in a subprocess (via ProcessPoolExecutor) so that fitz's
+    GIL-holding C code does not stall the tkinter main thread.
+    All imports are done locally so this module is safe for workers to import.
+    """
+    try:
+        fitz_mod = importlib.import_module("fitz")
+    except ImportError:
+        return [], 0
+    try:
+        rx = re.compile(pattern, re.IGNORECASE)
+        doc = fitz_mod.open(path)
+        snippets: list[str] = []
+        total = 0
+        ctx_before = max(10, snippet_chars // 3)
+        ctx_after  = max(10, snippet_chars // 2)
+        for page_num, page in enumerate(doc, 1):
+            # xhtml mode correctly maps accented characters (é, â, î…)
+            xhtml = page.get_text("xhtml")
+            s = re.sub(r'</p>|</div>|<br[^>]*/?>', '\n', xhtml, flags=re.IGNORECASE)
+            s = re.sub(r'<[^>]+>', '', s)
+            text = _html.unescape(s)
+            for m in rx.finditer(text):
+                total += 1
+                if len(snippets) < 5:
+                    start = max(0, m.start() - ctx_before)
+                    end   = min(len(text), m.end() + ctx_after)
+                    raw   = text[start:end].replace("\n", " ").strip()
+                    if len(raw) > snippet_chars:
+                        raw = raw[:snippet_chars] + "…"
+                    snippets.append(f"p.{page_num}: …{raw}…")
+        doc.close()
+        return snippets, total
+    except Exception:
+        return [], 0
 
 
 def search_names(
