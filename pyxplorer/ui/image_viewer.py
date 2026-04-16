@@ -163,47 +163,63 @@ class ImageViewer(ttk.Frame):
             return False
 
         try:
-            image_for_clipboard = self._thumbnail
-            if image_for_clipboard.mode not in ("RGB", "RGBA"):
-                image_for_clipboard = image_for_clipboard.convert("RGBA")
-            if image_for_clipboard.mode == "RGBA":
-                image_for_clipboard = image_for_clipboard.convert("RGB")
+            from ctypes import wintypes
+
+            img = self._thumbnail
+            if img.mode != "RGB":
+                img = img.convert("RGB")
 
             bmp_io = io.BytesIO()
-            image_for_clipboard.save(bmp_io, format="BMP")
+            img.save(bmp_io, format="BMP")
             bmp_data = bmp_io.getvalue()
             if len(bmp_data) <= 14:
                 raise ValueError("Invalid BMP data generated")
 
-            dib_data = bmp_data[14:]
+            dib_data = bmp_data[14:]   # strip 14-byte file header → CF_DIB format
             data_len = len(dib_data)
 
-            user32 = ctypes.windll.user32
             kernel32 = ctypes.windll.kernel32
+            user32   = ctypes.windll.user32
+
+            # ctypes.windll defaults restype to c_int (32-bit).  HGLOBAL / LPVOID
+            # are pointer-sized (64-bit on 64-bit Windows), so the handle returned
+            # by GlobalAlloc would be silently truncated and GlobalLock would fail.
+            # Declare the correct types explicitly.
+            kernel32.GlobalAlloc.restype   = ctypes.c_void_p
+            kernel32.GlobalAlloc.argtypes  = [wintypes.UINT, ctypes.c_size_t]
+            kernel32.GlobalLock.restype    = ctypes.c_void_p
+            kernel32.GlobalLock.argtypes   = [ctypes.c_void_p]
+            kernel32.GlobalUnlock.restype  = wintypes.BOOL
+            kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalFree.restype    = ctypes.c_void_p
+            kernel32.GlobalFree.argtypes   = [ctypes.c_void_p]
+            user32.SetClipboardData.restype  = ctypes.c_void_p
+            user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+
+            # Allocate and fill memory before opening the clipboard so we can
+            # free it cleanly if anything goes wrong before SetClipboardData.
+            h_mem = kernel32.GlobalAlloc(_GHND, data_len)
+            if not h_mem:
+                raise MemoryError("GlobalAlloc failed")
+
+            ptr = kernel32.GlobalLock(h_mem)
+            if not ptr:
+                kernel32.GlobalFree(h_mem)
+                raise MemoryError("GlobalLock failed")
+            try:
+                ctypes.memmove(ptr, dib_data, data_len)
+            finally:
+                kernel32.GlobalUnlock(h_mem)
 
             if not user32.OpenClipboard(None):
+                kernel32.GlobalFree(h_mem)
                 raise OSError("OpenClipboard failed")
             try:
-                if not user32.EmptyClipboard():
-                    raise OSError("EmptyClipboard failed")
-
-                h_global = kernel32.GlobalAlloc(_GHND, data_len)
-                if not h_global:
-                    raise MemoryError("GlobalAlloc failed")
-
-                ptr = kernel32.GlobalLock(h_global)
-                if not ptr:
-                    kernel32.GlobalFree(h_global)
-                    raise MemoryError("GlobalLock failed")
-
-                try:
-                    ctypes.memmove(ptr, dib_data, data_len)
-                finally:
-                    kernel32.GlobalUnlock(h_global)
-
-                if not user32.SetClipboardData(_CF_DIB, h_global):
-                    kernel32.GlobalFree(h_global)
+                user32.EmptyClipboard()
+                if not user32.SetClipboardData(_CF_DIB, h_mem):
+                    kernel32.GlobalFree(h_mem)
                     raise OSError("SetClipboardData failed")
+                # Clipboard now owns h_mem — must not free it
             finally:
                 user32.CloseClipboard()
 

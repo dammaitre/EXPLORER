@@ -935,17 +935,28 @@ class PDFViewer(ttk.Frame):
     def _on_page_down(self, event: tk.Event | None = None) -> str:
         if self._doc is None:
             return "break"
-        self._scroll_to_page(self._current_top_page() + 1)
+        current = self._current_top_page()
+        if current >= self._page_count - 1:
+            # Already on the last page — scroll to the very bottom.
+            self._canvas.yview_moveto(1.0)
+            self._schedule_visible_render()
+        else:
+            self._scroll_to_page(current + 1)
         return "break"
 
     def _on_page_up(self, event: tk.Event | None = None) -> str:
         if self._doc is None:
             return "break"
         current = self._current_top_page()
+        if current == 0:
+            # Already on the first page — scroll to the very top.
+            self._canvas.yview_moveto(0.0)
+            self._schedule_visible_render()
+            return "break"
         viewport_top = self._canvas.canvasy(0)
         layout = self._page_layouts[current]
-        # If already near the top of the current page, jump to the previous one
-        if current == 0 or abs(layout["y"] - viewport_top) < 10:
+        # If already near the top of the current page, jump to the previous one.
+        if abs(layout["y"] - viewport_top) < 10:
             self._scroll_to_page(current - 1)
         else:
             self._scroll_to_page(current)
