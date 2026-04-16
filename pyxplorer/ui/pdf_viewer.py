@@ -1,4 +1,3 @@
-import io
 import importlib
 import os
 import queue
@@ -52,6 +51,7 @@ _QUEUE_TICK_MS = 35
 _ZOOM_MIN = 0.5
 _ZOOM_MAX = 3.0
 _ZOOM_STEP = 1.1
+_ZOOM_DEBOUNCE_MS = 200      # ms of scroll inactivity before re-render fires
 _DEFAULT_ZOOM = min(_ZOOM_MAX, max(_ZOOM_MIN, DEFAULT_PDF_ZOOM))
 _SCROLL_SPEED = SCROLL_SPEED
 _VISIBLE_PAGE_BUFFER = 2
@@ -90,6 +90,10 @@ class PDFViewer(ttk.Frame):
         self._drag_current: tuple[float, float] | None = None
         self._zoom = _DEFAULT_ZOOM
         self._pending_zoom_anchor: dict | None = None
+        self._zoom_after: str | None = None      # debounce handle
+        self._canvas_needs_clear: bool = False   # wipe canvas on first new page arrival
+        self._stale_photos: list = []            # old photos kept alive until canvas wipe
+        self._page_dim_cache: dict[int, tuple[float, float]] = {}  # index → (w_pt, h_pt)
 
         self._build()
         self.show_message("Select a single PDF file and press Ctrl+Alt+P.")
@@ -183,6 +187,12 @@ class PDFViewer(ttk.Frame):
 
     def unload(self) -> None:
         self._load_token += 1
+        if self._zoom_after is not None:
+            try:
+                self.after_cancel(self._zoom_after)
+            except Exception:
+                pass
+            self._zoom_after = None
         if self._pump_after is not None:
             try:
                 self.after_cancel(self._pump_after)
@@ -196,6 +206,9 @@ class PDFViewer(ttk.Frame):
                 pass
             self._visible_after = None
         self._clear_selection()
+        self._canvas_needs_clear = False
+        self._stale_photos.clear()
+        self._page_dim_cache.clear()
         self._page_views.clear()
         self._page_view_by_index.clear()
         self._page_layouts.clear()
@@ -265,6 +278,13 @@ class PDFViewer(ttk.Frame):
         self._pending_zoom_anchor = self._capture_zoom_anchor()
         self._load_token += 1
         self._clear_selection()
+
+        # Keep old photos alive and flag canvas for lazy wipe.
+        # The canvas is cleared only when the first new page is ready to be placed,
+        # so the old content stays visible until then instead of flashing blank.
+        self._stale_photos = list(self._photos)
+        self._canvas_needs_clear = True
+
         self._page_views.clear()
         self._page_view_by_index.clear()
         self._photos.clear()
@@ -272,8 +292,6 @@ class PDFViewer(ttk.Frame):
         self._pending_pages.clear()
         self._loaded_count = 0
         self._failed_count = 0
-        self._canvas.delete("all")
-        self._canvas.configure(scrollregion=(0, 0, 0, 0))
         self._rebuild_page_layouts()
         self._request_visible_pages(priority=True)
 
@@ -677,18 +695,22 @@ class PDFViewer(ttk.Frame):
         y = _MARGIN_Y
         max_width = 0
         for index in range(self._page_count):
-            page = self._doc.load_page(index)
-            rect = page.rect
-            render_width = max(1, int(round(rect.width * self._zoom)))
-            render_height = max(1, int(round(rect.height * self._zoom)))
+            if index in self._page_dim_cache:
+                page_w, page_h = self._page_dim_cache[index]
+            else:
+                rect = self._doc.load_page(index).rect
+                page_w, page_h = rect.width, rect.height
+                self._page_dim_cache[index] = (page_w, page_h)
+            render_width = max(1, int(round(page_w * self._zoom)))
+            render_height = max(1, int(round(page_h * self._zoom)))
             layouts.append({
                 "index": index,
                 "x": 0.0,
                 "y": y,
                 "render_width": render_width,
                 "render_height": render_height,
-                "page_width": rect.width,
-                "page_height": rect.height,
+                "page_width": page_w,
+                "page_height": page_h,
             })
             y += render_height + _PAGE_GAP
             max_width = max(max_width, render_width)
@@ -768,9 +790,10 @@ class PDFViewer(ttk.Frame):
             pix = page.get_pixmap(matrix=matrix, alpha=False, annots=True)
         except Exception:
             pix = page.get_pixmap(matrix=matrix, alpha=False, annots=False)
+        # Pass raw RGB samples — avoids a PNG encode here and a PNG decode in _append_page.
         return {
             "index": index,
-            "png": pix.tobytes("png"),
+            "samples": bytes(pix.samples),
             "render_width": pix.width,
             "render_height": pix.height,
             "page_width": rect.width,
@@ -790,7 +813,19 @@ class PDFViewer(ttk.Frame):
             return
         layout = self._page_layouts[index]
 
-        image = Image.open(io.BytesIO(payload["png"]))
+        # Lazy canvas wipe: clear old content just before placing the first new page.
+        if self._canvas_needs_clear:
+            self._canvas.delete("all")
+            self._canvas.configure(scrollregion=(0, 0, 0, 0))
+            self._stale_photos.clear()
+            self._canvas_needs_clear = False
+            self._recenter_pages()
+
+        image = Image.frombytes(
+            "RGB",
+            (payload["render_width"], payload["render_height"]),
+            payload["samples"],
+        )
         photo = ImageTk.PhotoImage(image, master=self.root)
         self._photos.append(photo)
         x = layout["x"]
@@ -857,10 +892,23 @@ class PDFViewer(ttk.Frame):
         self._zoom = new_zoom
         self._status_cb(f"PDF zoom: {round(self._zoom * 100)}%")
         if self._doc is not None:
-            self._rerender_current_pdf()
+            self._schedule_zoom_rerender()
         else:
             self.show_message(f"PDF zoom set to {round(self._zoom * 100)}%")
         return "break"
+
+    def _schedule_zoom_rerender(self) -> None:
+        """Debounce zoom: re-render fires once, _ZOOM_DEBOUNCE_MS after the last scroll tick."""
+        if self._zoom_after is not None:
+            try:
+                self.after_cancel(self._zoom_after)
+            except Exception:
+                pass
+        self._zoom_after = self.after(_ZOOM_DEBOUNCE_MS, self._do_zoom_rerender)
+
+    def _do_zoom_rerender(self) -> None:
+        self._zoom_after = None
+        self._rerender_current_pdf()
 
     def _current_top_page(self) -> int:
         """Index of the first page whose bottom edge is below the viewport top."""

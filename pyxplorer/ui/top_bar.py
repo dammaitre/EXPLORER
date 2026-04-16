@@ -93,8 +93,10 @@ class TopBar(ttk.Frame):
         """Ctrl+R: Win+R style run dialog."""
         dlg = tk.Toplevel(self)
         dlg.title("Run")
-        dlg.geometry("420x100")
+        dlg.geometry("420x110")
         dlg.resizable(False, False)
+        dlg.configure(bg=_BG)
+        dlg.transient(self.winfo_toplevel())
         dlg.grab_set()
         dlg.focus_set()
 

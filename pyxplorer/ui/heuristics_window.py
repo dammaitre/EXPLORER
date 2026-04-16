@@ -6,9 +6,10 @@ from typing import Callable
 from ..core.heuristics import list_heuristic_scripts, scripts_dir
 from ..settings import THEME as _T
 
-_FONT = _T["font_family"]
-_SZ = _T["font_size_base"]
-_SZ_S = _T["font_size_small"]
+_FONT      = _T["font_family"]
+_SZ        = _T["font_size_base"]
+_SZ_S      = _T["font_size_small"]
+_BG        = _T["bg"]
 _TEXT_MUTE = _T["text_mute"]
 
 
@@ -31,6 +32,7 @@ class HeuristicsWindow:
         self.win.title("Pyxplorer Heuristics")
         self.win.geometry("420x520")
         self.win.minsize(340, 260)
+        self.win.configure(bg=_BG)
         self.win.transient(root)
         self.win.protocol("WM_DELETE_WINDOW", self.close)
 

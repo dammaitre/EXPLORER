@@ -8,7 +8,7 @@ import sys
 import subprocess
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox
 
 from .core.longpath import normalize, to_display
 from .core.fs import copy_items, move_items, make_dir, delete_items, rename_item
@@ -23,8 +23,54 @@ from .core import tags as _tags
 from .ui.search_dialog import SearchDialog
 from .settings import THEME as _T
 
-_FONT = _T["font_family"]
-_SZ   = _T["font_size_base"]
+_FONT    = _T["font_family"]
+_SZ      = _T["font_size_base"]
+_SZ_S    = _T["font_size_small"]
+_BG      = _T["bg"]
+_BG_DARK = _T["bg_dark"]
+
+
+# ── Themed dialog helpers ──────────────────────────────────────────────────────
+
+def _ask_string(root: tk.Tk, title: str, prompt: str, initial: str = "") -> str | None:
+    """Dark-themed replacement for simpledialog.askstring."""
+    result: list[str | None] = [None]
+
+    dlg = tk.Toplevel(root)
+    dlg.title(title)
+    dlg.geometry("420x110")
+    dlg.resizable(False, False)
+    dlg.configure(bg=_BG)
+    dlg.transient(root)
+    dlg.grab_set()
+
+    ttk.Label(dlg, text=prompt, font=(_FONT, _SZ)).pack(
+        anchor="w", padx=14, pady=(14, 4)
+    )
+    var = tk.StringVar(value=initial)
+    entry = ttk.Entry(dlg, textvariable=var, font=(_FONT, _SZ))
+    entry.pack(fill=tk.X, padx=14)
+    entry.select_range(0, tk.END)
+    entry.focus_set()
+
+    def _ok(event=None):
+        result[0] = var.get()
+        dlg.destroy()
+
+    def _cancel(event=None):
+        dlg.destroy()
+
+    entry.bind("<Return>", _ok)
+    entry.bind("<Escape>", _cancel)
+    dlg.bind("<Escape>", _cancel)
+
+    btn_row = ttk.Frame(dlg)
+    btn_row.pack(anchor="e", padx=14, pady=8)
+    ttk.Button(btn_row, text="OK",     command=_ok,     width=8).pack(side=tk.LEFT, padx=2)
+    ttk.Button(btn_row, text="Cancel", command=_cancel, width=8).pack(side=tk.LEFT, padx=2)
+
+    root.wait_window(dlg)
+    return result[0]
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -184,11 +230,11 @@ def _set_tag_dialog(root: tk.Tk, state, refresh_cb, status_cb) -> None:
         return
 
     initial = _tags.get_tag(paths[0]) if len(paths) == 1 else ""
-    value = simpledialog.askstring(
+    value = _ask_string(
+        root,
         "Set tag",
         "Tag for selected item(s) (leave empty to clear):",
-        parent=root,
-        initialvalue=initial or "",
+        initial=initial or "",
     )
     if value is None:
         status_cb("Tagging cancelled")
@@ -222,8 +268,10 @@ def _reload_settings(status_cb, on_reload_cb=None) -> None:
 def _new_folder_dialog(root: tk.Tk, state, refresh_cb) -> None:
     dlg = tk.Toplevel(root)
     dlg.title("New Folder")
-    dlg.geometry("420x105")
+    dlg.geometry("420x110")
     dlg.resizable(False, False)
+    dlg.configure(bg=_BG)
+    dlg.transient(root)
     dlg.grab_set()
 
     ttk.Label(dlg, text="Folder name:", font=(_FONT, _SZ)).pack(
@@ -266,12 +314,7 @@ def _rename_selected_dialog(root: tk.Tk, state, refresh_cb, focus_main_cb) -> No
         if not current_name:
             return
 
-        new_name = simpledialog.askstring(
-            "Rename",
-            "New name:",
-            parent=root,
-            initialvalue=current_name,
-        )
+        new_name = _ask_string(root, "Rename", "New name:", initial=current_name)
         if new_name is None:
             return
         new_name = new_name.strip()

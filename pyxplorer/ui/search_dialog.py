@@ -687,6 +687,7 @@ class SearchDialog:
         self._heuristic_picker = win
         win.title("Run heuristic on search results")
         win.geometry("420x360")
+        win.configure(bg=BG)
         win.transient(self._dlg)
 
         ttk.Label(
@@ -696,7 +697,19 @@ class SearchDialog:
             foreground=TEXT_M,
         ).pack(anchor="w", padx=12, pady=(10, 6))
 
-        lb = tk.Listbox(win, activestyle="dotbox", font=(_FONT, _SZ))
+        lb = tk.Listbox(
+            win,
+            font=(_FONT, _SZ),
+            background=BG_DARK,
+            foreground=TEXT,
+            selectbackground=ROW_SEL,
+            selectforeground=TEXT,
+            activestyle="none",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=BORDER,
+            relief="flat",
+        )
         lb.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 12))
         for script in scripts:
             lb.insert(tk.END, script.name)

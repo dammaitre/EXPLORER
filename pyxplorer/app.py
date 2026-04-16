@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .state import AppState
-from .core.longpath import normalize, to_display, enable_longpath_registry
+from .core.longpath import normalize, to_display
 from .core.scanner import SizeScanner, CancelToken, _is_scan_skipped
 from .ui import icons as _icons_mod
 from .ui.top_bar import TopBar
@@ -252,9 +252,6 @@ class App:
 
         _apply_win11_style(self.root)
         self.root.configure(bg=BG)
-
-        # Long-path registry fix (silent — no admin prompt at this stage)
-        enable_longpath_registry()
 
         self.state = AppState(start_path=self._start_path)
 
@@ -601,6 +598,6 @@ class App:
         self.root.after(100, self._process_queue)
 
     def run(self) -> None:
-        self._navigate(self.state.current_dir)
+        self.root.after(0, lambda: self._navigate(self.state.current_dir))
         self.root.after(100, self._process_queue)
         self.root.mainloop()

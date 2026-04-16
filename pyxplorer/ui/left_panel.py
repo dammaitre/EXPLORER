@@ -52,6 +52,7 @@ class LeftPanel(ttk.Frame):
         self._loaded: set[str] = set()                 # iids whose children have been loaded
         self._current_iid: str | None = None
         self.focus_back_cb: Callable[[], None] | None = None  # set by App after layout is built
+        self._expand_token: int = 0  # incremented on each load_dir to cancel stale expansions
 
         self._build()
         self._populate_roots()
@@ -449,6 +450,7 @@ class LeftPanel(ttk.Frame):
 
     def load_dir(self, path: str) -> None:
         """Highlight the current node and expand the tree to it if needed."""
+        self._expand_token += 1  # cancel any in-progress async expansion
         self._set_current(None)  # clear old highlight
 
         key = self._key(path)
@@ -493,7 +495,7 @@ class LeftPanel(ttk.Frame):
     # ------------------------------------------------------------------
 
     def _expand_to(self, path: str) -> None:
-        """Walk down the tree, loading children at each level, until we reach path."""
+        """Walk down the tree one level per event-loop tick to avoid blocking the UI."""
         display = to_display(path)
         try:
             parts = Path(display).parts   # ('C:\\', 'Users', 'Projects', ...)
@@ -502,24 +504,36 @@ class LeftPanel(ttk.Frame):
         if not parts:
             return
 
-        # Find the drive root node
         drive = parts[0]
         current_iid = self._path_nodes.get(self._key(drive))
         if not current_iid:
             return
 
-        accumulated = drive
-        for part in parts[1:]:
-            # Expand and load children of the current level
-            self._tree.item(current_iid, open=True)
-            self._load_children(current_iid)
+        token = self._expand_token
+        self._expand_step(list(parts[1:]), drive, current_iid, token)
 
-            accumulated = str(Path(accumulated) / part)
-            child_iid = self._path_nodes.get(self._key(accumulated))
-            if child_iid:
-                current_iid = child_iid
-            else:
-                break   # path not found in tree (e.g. hidden or error)
+    def _expand_step(self, remaining: list[str], accumulated: str,
+                     current_iid: str, token: int) -> None:
+        """Process one path level, then schedule the next via after(0, …)."""
+        if token != self._expand_token:
+            return  # navigation changed mid-expansion — abort
 
-        self._set_current(current_iid)
-        self._tree.see(current_iid)
+        if not remaining:
+            self._set_current(current_iid)
+            self._tree.see(current_iid)
+            return
+
+        part, *rest = remaining
+        self._tree.item(current_iid, open=True)
+        self._load_children(current_iid)
+
+        accumulated = str(Path(accumulated) / part)
+        child_iid = self._path_nodes.get(self._key(accumulated))
+        if child_iid:
+            self._tree.after(
+                0,
+                lambda a=accumulated, c=child_iid: self._expand_step(rest, a, c, token),
+            )
+        else:
+            self._set_current(current_iid)
+            self._tree.see(current_iid)
