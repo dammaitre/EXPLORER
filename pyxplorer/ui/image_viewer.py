@@ -38,6 +38,7 @@ except ImportError:
 _BG       = _T["bg"]
 _BG_DARK  = _T["bg_dark"]
 _TEXT_MUTE= _T["text_mute"]
+_ACCENT   = _T["accent"]
 _FONT     = _T["font_family"]
 _SZ_S     = _T["font_size_small"]
 
@@ -79,6 +80,9 @@ class ImageViewer(ttk.Frame):
         self._loading:      bool        = False
         self._load_token:   int         = 0
         self._canvas_image: int | None  = None   # canvas item id
+        self._drag_anchor:    tuple[float, float] | None = None
+        self._drag_current:   tuple[float, float] | None = None
+        self._selection_items: list[int] = []
 
         self._build()
 
@@ -133,10 +137,13 @@ class ImageViewer(ttk.Frame):
         self._canvas.bind("<MouseWheel>",         self._on_mousewheel)
         self._canvas.bind("<Shift-MouseWheel>",   self._on_shift_wheel)
         self._canvas.bind("<Control-MouseWheel>", self._on_ctrl_wheel)
-        self._canvas.bind("<Button-1>",
-                          lambda e: self._canvas.focus_set())
+        self._canvas.bind("<ButtonPress-1>",   self._on_press)
+        self._canvas.bind("<B1-Motion>",        self._on_drag)
+        self._canvas.bind("<ButtonRelease-1>",  self._on_release)
         self._canvas.bind("<Control-c>", self._on_copy_image)
         self._canvas.bind("<Control-C>", self._on_copy_image)
+        self._canvas.bind("<Control-i>", lambda e: self._copy_selection_image() or "break")
+        self._canvas.bind("<Control-I>", lambda e: self._copy_selection_image() or "break")
         self._canvas.bind("<Configure>",          self._on_canvas_configure)
 
     # ------------------------------------------------------------------
@@ -251,6 +258,7 @@ class ImageViewer(ttk.Frame):
         self._thumbnail = None
         self._photo = None
         self._zoom = _DEFAULT_ZOOM
+        self._clear_selection()
         self._canvas.delete("all")
         self._canvas.configure(scrollregion=(0, 0, 0, 0))
         self.show_message("Select an image file and press Ctrl+Alt+I.")
@@ -344,6 +352,7 @@ class ImageViewer(ttk.Frame):
         """Scale thumbnail by current zoom and draw on canvas."""
         if self._thumbnail is None:
             return
+        self._clear_selection()
 
         tw, th = self._thumbnail.size  # type: ignore[union-attr]
         dw = max(1, int(tw * self._zoom))
@@ -374,6 +383,147 @@ class ImageViewer(ttk.Frame):
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
+
+    def _on_press(self, event: tk.Event) -> None:
+        self._canvas.focus_set()
+        self._clear_selection()
+        self._drag_anchor  = (self._canvas.canvasx(event.x), self._canvas.canvasy(event.y))
+        self._drag_current = self._drag_anchor
+
+    def _on_drag(self, event: tk.Event) -> None:
+        if self._drag_anchor is None:
+            return
+        self._drag_current = (self._canvas.canvasx(event.x), self._canvas.canvasy(event.y))
+        self._refresh_selection_visuals()
+
+    def _on_release(self, event: tk.Event) -> None:
+        if self._drag_anchor is None:
+            return
+        self._drag_current = (self._canvas.canvasx(event.x), self._canvas.canvasy(event.y))
+        self._refresh_selection_visuals()
+
+    def _selection_bbox(self) -> tuple[float, float, float, float] | None:
+        if self._drag_anchor is None or self._drag_current is None:
+            return None
+        x1, y1 = self._drag_anchor
+        x2, y2 = self._drag_current
+        if abs(x2 - x1) < 3 and abs(y2 - y1) < 3:
+            return None
+        return min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
+
+    def _clear_selection(self) -> None:
+        self._drag_anchor  = None
+        self._drag_current = None
+        while self._selection_items:
+            self._canvas.delete(self._selection_items.pop())
+
+    def _refresh_selection_visuals(self) -> None:
+        while self._selection_items:
+            self._canvas.delete(self._selection_items.pop())
+        bbox = self._selection_bbox()
+        if bbox is None:
+            return
+        x1, y1, x2, y2 = bbox
+        rect_id = self._canvas.create_rectangle(
+            x1, y1, x2, y2,
+            fill=_ACCENT, outline=_ACCENT, stipple="gray25", width=1,
+        )
+        self._selection_items.append(rect_id)
+
+    def _copy_selection_image(self) -> str | None:
+        """Crop the selected canvas region and copy it to the Windows clipboard."""
+        if self._thumbnail is None:
+            self._status_cb("Ctrl+I: No image loaded")
+            return None
+        bbox = self._selection_bbox()
+        if bbox is None:
+            self._status_cb("Ctrl+I: No selection — drag a region first")
+            return None
+
+        tw, th = self._thumbnail.size
+        dw = max(1, int(tw * self._zoom))
+        dh = max(1, int(th * self._zoom))
+        cw = self._canvas.winfo_width()  or dw
+        ch = self._canvas.winfo_height() or dh
+        # Canvas coords of the image top-left corner (mirrors _render logic)
+        img_left = max(dw // 2, cw // 2) - dw // 2
+        img_top  = max(dh // 2, ch // 2) - dh // 2
+
+        sx1, sy1, sx2, sy2 = bbox
+        # Intersect selection with the image area
+        cx1 = max(sx1, img_left)
+        cy1 = max(sy1, img_top)
+        cx2 = min(sx2, img_left + dw)
+        cy2 = min(sy2, img_top  + dh)
+        if cx1 >= cx2 or cy1 >= cy2:
+            self._status_cb("Ctrl+I: Selection is outside the image")
+            return None
+
+        # Map to thumbnail pixel coords (inverse of zoom scale)
+        px1 = max(0, min(int((cx1 - img_left) / self._zoom), tw))
+        py1 = max(0, min(int((cy1 - img_top)  / self._zoom), th))
+        px2 = max(0, min(int((cx2 - img_left) / self._zoom), tw))
+        py2 = max(0, min(int((cy2 - img_top)  / self._zoom), th))
+        if px1 >= px2 or py1 >= py2:
+            self._status_cb("Ctrl+I: Selection too small")
+            return None
+
+        cropped = self._thumbnail.crop((px1, py1, px2, py2))
+        if sys.platform != "win32":
+            self._status_cb("Ctrl+I: Clipboard image copy is Windows-only")
+            return None
+        try:
+            from ctypes import wintypes
+            img = cropped.convert("RGB")
+            bmp_io = io.BytesIO()
+            img.save(bmp_io, format="BMP")
+            bmp_data = bmp_io.getvalue()
+            dib_data = bmp_data[14:]
+            data_len = len(dib_data)
+
+            kernel32 = ctypes.windll.kernel32
+            user32   = ctypes.windll.user32
+            kernel32.GlobalAlloc.restype   = ctypes.c_void_p
+            kernel32.GlobalAlloc.argtypes  = [wintypes.UINT, ctypes.c_size_t]
+            kernel32.GlobalLock.restype    = ctypes.c_void_p
+            kernel32.GlobalLock.argtypes   = [ctypes.c_void_p]
+            kernel32.GlobalUnlock.restype  = wintypes.BOOL
+            kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+            kernel32.GlobalFree.restype    = ctypes.c_void_p
+            kernel32.GlobalFree.argtypes   = [ctypes.c_void_p]
+            user32.SetClipboardData.restype  = ctypes.c_void_p
+            user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+
+            h_mem = kernel32.GlobalAlloc(_GHND, data_len)
+            if not h_mem:
+                raise MemoryError("GlobalAlloc failed")
+            ptr = kernel32.GlobalLock(h_mem)
+            if not ptr:
+                kernel32.GlobalFree(h_mem)
+                raise MemoryError("GlobalLock failed")
+            try:
+                ctypes.memmove(ptr, dib_data, data_len)
+            finally:
+                kernel32.GlobalUnlock(h_mem)
+
+            if not user32.OpenClipboard(None):
+                kernel32.GlobalFree(h_mem)
+                raise OSError("OpenClipboard failed")
+            try:
+                user32.EmptyClipboard()
+                if not user32.SetClipboardData(_CF_DIB, h_mem):
+                    kernel32.GlobalFree(h_mem)
+                    raise OSError("SetClipboardData failed")
+            finally:
+                user32.CloseClipboard()
+
+            self._status_cb(
+                f"Ctrl+I: Selection copied ({px2 - px1}×{py2 - py1} px)"
+            )
+            return "break"
+        except Exception as exc:
+            self._status_cb(f"Ctrl+I: Copy failed — {exc}")
+            return None
 
     def _on_mousewheel(self, event: tk.Event) -> str:
         delta = -1 if event.delta < 0 else 1

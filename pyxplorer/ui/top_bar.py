@@ -87,7 +87,7 @@ class TopBar(ttk.Frame):
         self._path_var.set(display)
         self._entry.icursor(tk.END)
         self._entry.configure(state="readonly")
-        self._build_breadcrumbs(display)
+        self._build_breadcrumbs(path)   # pass original (may contain ARCHIVE_SEP)
 
     def open_run_dialog(self) -> None:
         """Ctrl+R: Win+R style run dialog."""
@@ -137,10 +137,59 @@ class TopBar(ttk.Frame):
     # Breadcrumbs
     # ------------------------------------------------------------------
 
-    def _build_breadcrumbs(self, display_path: str) -> None:
+    def _build_breadcrumbs(self, path: str) -> None:
         for w in self._crumb_frame.winfo_children():
             w.destroy()
 
+        from ..core.archive import (
+            is_archive_virtual_path, split_archive_path, make_archive_path,
+        )
+
+        def _separator():
+            ttk.Label(
+                self._crumb_frame, text="›",
+                foreground=_TEXT_MUTE, background=_BG, font=(_FONT, _SZ),
+            ).pack(side=tk.LEFT)
+
+        def _crumb(label: str, target: str, first: bool = False) -> None:
+            if not first:
+                _separator()
+            ttk.Button(
+                self._crumb_frame, text=label,
+                style="Breadcrumb.TButton",
+                command=lambda p=target: self.navigate_cb(p),
+            ).pack(side=tk.LEFT)
+
+        if is_archive_virtual_path(path):
+            archive_path, inner_path = split_archive_path(path)
+            display_archive = to_display(archive_path)
+
+            # Real-path breadcrumbs up to and including the archive file
+            try:
+                parts = Path(display_archive).parts
+            except Exception:
+                return
+            accumulated = ""
+            for i, part in enumerate(parts):
+                accumulated = part if i == 0 else str(Path(accumulated) / part)
+                label = part.rstrip("\\") or part
+                if i == len(parts) - 1:
+                    # The archive file itself — clicking opens its root
+                    crumb_target = make_archive_path(accumulated, "")
+                else:
+                    crumb_target = accumulated
+                _crumb(label, crumb_target, first=(i == 0))
+
+            # Inner-path breadcrumbs
+            inner_parts = [p for p in inner_path.replace("\\", "/").split("/") if p]
+            accumulated_inner = ""
+            for part in inner_parts:
+                accumulated_inner = (accumulated_inner + "/" + part) if accumulated_inner else part
+                _crumb(part, make_archive_path(archive_path, accumulated_inner))
+            return
+
+        # Real path — use to_display to strip \\?\ before splitting
+        display_path = to_display(path)
         try:
             parts = Path(display_path).parts  # ('C:\\', 'Users', ...) on Windows
         except Exception:
@@ -153,23 +202,8 @@ class TopBar(ttk.Frame):
             else:
                 accumulated = str(Path(accumulated) / part)
 
-            if i > 0:
-                ttk.Label(
-                    self._crumb_frame,
-                    text="›",
-                    foreground=_TEXT_MUTE,
-                    background=_BG,
-                    font=(_FONT, _SZ),
-                ).pack(side=tk.LEFT)
-
             label = part.rstrip("\\") or part  # 'C:\\' → 'C:'
-            crumb_path = accumulated
-            ttk.Button(
-                self._crumb_frame,
-                text=label,
-                style="Breadcrumb.TButton",
-                command=lambda p=crumb_path: self.navigate_cb(p),
-            ).pack(side=tk.LEFT)
+            _crumb(label, accumulated, first=(i == 0))
 
     # ------------------------------------------------------------------
     # Entry handlers
@@ -205,7 +239,15 @@ class TopBar(ttk.Frame):
             self._entry.configure(state="readonly")
             self.navigate_cb(norm)
         else:
-            self._flash_error()
+            # Path may go through an archive file (e.g. typed from breadcrumb display)
+            from ..core.archive import find_archive_in_path
+            virtual = find_archive_in_path(norm)
+            if virtual:
+                self._editing_path = False
+                self._entry.configure(state="readonly")
+                self.navigate_cb(virtual)
+            else:
+                self._flash_error()
 
     def _on_escape(self, event=None) -> str:
         self._hide_history()

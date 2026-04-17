@@ -7,6 +7,9 @@ NTFS_MAX     = 32_767   # hard ceiling for \\?\ extended paths
 UNC_PREFIX   = "\\\\?\\"  # Extended-length path prefix  (\\?\)
 
 
+_ARCHIVE_SEP = "\x00"   # same constant as archive.ARCHIVE_SEP — avoid circular import
+
+
 def normalize(path: "str | pathlib.Path") -> str:
     """
     Return a path string safe for all Win32 API calls.
@@ -14,9 +17,12 @@ def normalize(path: "str | pathlib.Path") -> str:
     - Paths that would exceed the NTFS hard limit (32 767 chars) are returned
       un-prefixed; callers already wrap OS calls in try/except.
     - On other OS: return as-is.
+    - Virtual archive paths (containing \\x00) are passed through unchanged.
     Idempotent: safe to call on already-prefixed paths.
     """
     p = str(path)
+    if _ARCHIVE_SEP in p:
+        return p          # virtual archive path — never pass to OS APIs directly
     if sys.platform != "win32":
         return p
     if p.startswith(UNC_PREFIX):
@@ -37,7 +43,16 @@ def normalize(path: "str | pathlib.Path") -> str:
 
 
 def to_display(path: str) -> str:
-    """Strip \\\\?\\ prefix for display in UI — users should never see it."""
+    """Strip \\\\?\\ prefix for display in UI — users should never see it.
+    For virtual archive paths, renders the null-byte separator as os.sep
+    so the path looks like a normal filesystem path in the UI.
+    """
+    if _ARCHIVE_SEP in path:
+        archive, inner = path.split(_ARCHIVE_SEP, 1)
+        display_archive = to_display(archive)
+        if inner:
+            return display_archive + os.sep + inner.replace("/", os.sep)
+        return display_archive
     if path.startswith(UNC_PREFIX):
         return path[len(UNC_PREFIX):]
     return path

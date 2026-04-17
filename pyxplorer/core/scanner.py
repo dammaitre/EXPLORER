@@ -123,6 +123,10 @@ class SizeScanner:
         for path in items:
             if token.cancelled:
                 return
+            if "\x00" in path:
+                # Virtual archive path — size comes from archive metadata, not OS scan
+                self.q.put(("size_result", path, -1))
+                continue
             if _is_network(path) or _is_scan_skipped(path):
                 # True UNC path — emit -1 so the row keeps showing "—"
                 self.q.put(("size_result", path, -1))

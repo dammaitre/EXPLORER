@@ -140,6 +140,21 @@ class LowerPanel(ttk.Frame):
         if len(paths) != 1:
             return
         path = paths[0]
+
+        from ..core.archive import is_archive_virtual_path, split_archive_path
+        if is_archive_virtual_path(path):
+            _, inner = split_archive_path(path)
+            if not inner:
+                return
+            ext = os.path.splitext(inner)[1].lower()
+            if self.active_tab == "pdf" and self._pdf_viewer.follow_selection:
+                if ext == ".pdf":
+                    self._load_archive_for_viewer("pdf", path, inner)
+            elif self.active_tab == "image" and self._image_viewer.follow_selection:
+                if ext in _IMAGE_EXTS:
+                    self._load_archive_for_viewer("image", path, inner)
+            return
+
         norm = normalize(path)
         if os.path.isdir(norm):
             return
@@ -160,6 +175,43 @@ class LowerPanel(ttk.Frame):
             self._title_var.set(f"Image viewer — {os.path.basename(to_display(norm))}")
             self._image_viewer.load_image(norm)
 
+    def _load_archive_for_viewer(self, viewer: str, virtual_path: str,
+                                  inner_path: str) -> None:
+        """Extract a file from an archive in a background thread, then load it."""
+        import threading
+        from ..core.archive import split_archive_path, extract_to_temp
+
+        archive_path, _ = split_archive_path(virtual_path)
+        name = inner_path.split("/")[-1]
+
+        if viewer == "pdf":
+            self._pdf_viewer.show_message(f"Extracting {name}…")
+        else:
+            self._image_viewer.show_message(f"Extracting {name}…")
+        self._status_cb(f"Extracting {name}…")
+
+        def _worker():
+            out = extract_to_temp(archive_path, inner_path)
+
+            def _done():
+                if out:
+                    self._title_var.set(f"{'PDF' if viewer == 'pdf' else 'Image'} viewer — {name}")
+                    if viewer == "pdf":
+                        self._pdf_viewer.load_pdf(out)
+                    else:
+                        self._image_viewer.load_image(out)
+                else:
+                    msg = f"Failed to extract {name} from archive"
+                    if viewer == "pdf":
+                        self._pdf_viewer.show_message(msg)
+                    else:
+                        self._image_viewer.show_message(msg)
+                    self._status_cb(msg)
+
+            self.root.after(0, _done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def request_pdf(self) -> None:
         self.show_tab("pdf")
         paths = list(self.state.selection)
@@ -168,7 +220,18 @@ class LowerPanel(ttk.Frame):
             self._status_cb("PDF load skipped: select a single PDF file")
             return
 
-        path = normalize(paths[0])
+        from ..core.archive import is_archive_virtual_path, split_archive_path
+        raw_path = paths[0]
+        if is_archive_virtual_path(raw_path):
+            _, inner = split_archive_path(raw_path)
+            if not inner or not inner.lower().endswith(".pdf"):
+                self._pdf_viewer.show_message("The selected item is not a PDF file.")
+                self._status_cb("PDF load skipped: selected item is not a PDF")
+                return
+            self._load_archive_for_viewer("pdf", raw_path, inner)
+            return
+
+        path = normalize(raw_path)
         if os.path.isdir(path) or not path.lower().endswith(".pdf"):
             self._pdf_viewer.show_message("The selected item is not a PDF file.")
             self._status_cb("PDF load skipped: selected item is not a PDF")
@@ -204,7 +267,19 @@ class LowerPanel(ttk.Frame):
             )
             self._status_cb("Image load skipped: select a single image file")
             return
-        path = normalize(paths[0])
+
+        from ..core.archive import is_archive_virtual_path, split_archive_path
+        raw_path = paths[0]
+        if is_archive_virtual_path(raw_path):
+            _, inner = split_archive_path(raw_path)
+            if not inner or os.path.splitext(inner)[1].lower() not in _IMAGE_EXTS:
+                self._image_viewer.show_message("The selected item is not a supported image.")
+                self._status_cb("Image load skipped: selected item is not a supported image")
+                return
+            self._load_archive_for_viewer("image", raw_path, inner)
+            return
+
+        path = normalize(raw_path)
         if os.path.isdir(path):
             self._image_viewer.show_message("Select an image file, not a directory.")
             self._status_cb("Image load skipped: selected item is a directory")

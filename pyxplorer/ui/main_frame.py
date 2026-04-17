@@ -170,6 +170,11 @@ class MainFrame(ttk.Frame):
         for iid in self._tree.get_children():
             self._tree.delete(iid)
 
+        from ..core.archive import is_archive_virtual_path, split_archive_path, list_archive_dir
+        if is_archive_virtual_path(path):
+            self._load_archive_dir(path, split_archive_path, list_archive_dir)
+            return
+
         norm = normalize(path)
         try:
             raw_entries = list(os.scandir(norm))
@@ -233,6 +238,52 @@ class MainFrame(ttk.Frame):
                 "pct_str":    "—",
                 "path":       entry.path,
                 "tag":        "symlink" if entry.is_symlink() else "file",
+            })
+
+        self._render_rows()
+
+    def _load_archive_dir(self, path: str, split_fn, list_fn) -> None:
+        """Populate the treeview from an archive virtual path."""
+        archive_path, inner_path = split_fn(path)
+        try:
+            entries = list_fn(archive_path, inner_path)
+        except Exception as exc:
+            self._tree.insert("", "end",
+                              text=f"  Error reading archive: {exc}",
+                              values=("", "", "", "", ""), tags=("denied",))
+            return
+
+        dirs  = sorted([e for e in entries if e.is_dir],  key=lambda e: e.name.lower())
+        files = sorted([e for e in entries if not e.is_dir], key=lambda e: e.name.lower())
+
+        for entry in dirs:
+            self._all_rows.append({
+                "name":       entry.name,
+                "is_dir":     True,
+                "size_bytes": -1,
+                "heur_str":   "",
+                "aka_str":    "",
+                "size_str":   "—",
+                "pct_str":    "—",
+                "path":       entry.path,
+                "tag":        "dir",
+            })
+
+        for entry in files:
+            if EXPR_SKIPPED and any(p.search(entry.name) for p in EXPR_SKIPPED):
+                continue
+            size     = entry.size if entry.size >= 0 else 0
+            size_str = fmt_size(size) if entry.size >= 0 else "—"
+            self._all_rows.append({
+                "name":       entry.name,
+                "is_dir":     False,
+                "size_bytes": entry.size,
+                "heur_str":   "",
+                "aka_str":    "",
+                "size_str":   size_str,
+                "pct_str":    "—",
+                "path":       entry.path,
+                "tag":        "file",
             })
 
         self._render_rows()
@@ -671,6 +722,24 @@ class MainFrame(ttk.Frame):
     def _go_up(self, event=None) -> str:
         if not self._current_path:
             return "break"
+
+        from ..core.archive import (
+            is_archive_virtual_path, split_archive_path, make_archive_path,
+        )
+        if is_archive_virtual_path(self._current_path):
+            archive_path, inner_path = split_archive_path(self._current_path)
+            if inner_path:
+                # Go up one level within the archive
+                parts  = inner_path.rstrip("/").split("/")
+                parent_inner = "/".join(parts[:-1])
+                self._pending_select = self._current_path
+                self.navigate_cb(make_archive_path(archive_path, parent_inner))
+            else:
+                # At archive root — go to the real containing directory
+                self._pending_select = archive_path   # select the archive file
+                self.navigate_cb(str(Path(to_display(archive_path)).parent))
+            return "break"
+
         display = to_display(self._current_path)
         parent = str(Path(display).parent)
         if os.path.normcase(parent) != os.path.normcase(display):
@@ -708,6 +777,10 @@ class MainFrame(ttk.Frame):
         path = row.get("path")
         if not isinstance(path, str):
             return None
+        # Archive files behave like directories — navigate into them
+        from ..core.archive import is_archive_file, is_archive_virtual_path, make_archive_path
+        if not is_archive_virtual_path(path) and is_archive_file(path):
+            return make_archive_path(normalize(path), "")
         return self._resolve_folder_shortcut(path)
 
     def _resolve_folder_shortcut(self, path: str) -> str | None:
@@ -750,6 +823,26 @@ class MainFrame(ttk.Frame):
 
     def _open_file(self, path: str) -> None:
         """Open a file with the OS default application (like double-clicking in Explorer)."""
+        from ..core.archive import is_archive_virtual_path, split_archive_path, extract_to_temp
+        if is_archive_virtual_path(path):
+            _, inner_path = split_archive_path(path)
+            if not inner_path:
+                return
+            archive_path, _ = split_archive_path(path)
+            name = inner_path.split("/")[-1]
+            self.status_cb(f"Extracting {name}…")
+            def _extract_and_open(ap=archive_path, ip=inner_path, n=name):
+                out = extract_to_temp(ap, ip)
+                if out:
+                    self.after(0, lambda p=out: self._open_real_file(p))
+                else:
+                    self.after(0, lambda: self.status_cb(f"Failed to extract {n}"))
+            threading.Thread(target=_extract_and_open, daemon=True).start()
+            return
+        self._open_real_file(path)
+
+    def _open_real_file(self, path: str) -> None:
+        """Open a real OS file with the default application."""
         try:
             # to_display strips the \\?\ prefix: ShellExecuteW (used by os.startfile)
             # does not support extended-length paths and can crash shell extension DLLs.
@@ -775,6 +868,9 @@ class MainFrame(ttk.Frame):
         target = self._resolve_directory_target(row)
         if not target:
             return
+        from ..core.archive import is_archive_virtual_path
+        if is_archive_virtual_path(target):
+            return   # cannot spawn a new window at a virtual archive path
         target = to_display(target)
         kwargs: dict = {}
         if sys.platform == "win32":

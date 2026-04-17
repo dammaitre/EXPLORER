@@ -526,9 +526,26 @@ class App:
     # ------------------------------------------------------------------
 
     def _navigate(self, path: str) -> None:
-        norm = normalize(path)
-        if not os.path.isdir(norm):
-            return
+        from .core.archive import (
+            is_archive_virtual_path, is_archive_file,
+            make_archive_path, find_archive_in_path,
+        )
+
+        if is_archive_virtual_path(path):
+            norm = path          # already a virtual archive path
+        else:
+            norm = normalize(path)
+            if not os.path.isdir(norm):
+                # Navigate into an archive file clicked directly
+                if is_archive_file(norm) and os.path.isfile(norm):
+                    norm = make_archive_path(norm, "")
+                else:
+                    # Breadcrumb may have sent a display path through an archive
+                    virtual = find_archive_in_path(norm)
+                    if virtual:
+                        norm = virtual
+                    else:
+                        return
 
         # Cancel any running scan before changing directory
         if self._scan_token:
@@ -540,6 +557,14 @@ class App:
         self.top_bar.update_path(norm)
         self.main_frame.load_dir(norm)
         self.left_panel.load_dir(norm)
+
+        # Archive virtual paths: sizes come from metadata, no OS scan needed
+        if is_archive_virtual_path(norm):
+            n     = self.main_frame.get_item_count()
+            total = self.main_frame.get_total_size()
+            self.main_frame.finalize_pct()
+            self.status_bar.stop_scanning(n, total)
+            return
 
         skip_scan = _is_scan_skipped(norm)
         if skip_scan:
