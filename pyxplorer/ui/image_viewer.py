@@ -113,6 +113,20 @@ class ImageViewer(ttk.Frame):
             style="TCheckbutton",
         ).pack(side=tk.RIGHT, padx=(0, 12))
 
+        ttk.Button(
+            top_bar,
+            text="↻",
+            width=2,
+            command=self._rotate_cw,
+        ).pack(side=tk.RIGHT, padx=(0, 2))
+
+        ttk.Button(
+            top_bar,
+            text="↺",
+            width=2,
+            command=self._rotate_ccw,
+        ).pack(side=tk.RIGHT, padx=(0, 2))
+
         viewport = ttk.Frame(self, style="LowerContent.TFrame")
         viewport.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
@@ -549,6 +563,18 @@ class ImageViewer(ttk.Frame):
             f"{pct}% zoom  (Ctrl+scroll to zoom)"
         )
         return "break"
+
+    def _rotate_cw(self) -> None:
+        if self._thumbnail is None:
+            return
+        self._thumbnail = self._thumbnail.rotate(-90, expand=True)
+        self._render()
+
+    def _rotate_ccw(self) -> None:
+        if self._thumbnail is None:
+            return
+        self._thumbnail = self._thumbnail.rotate(90, expand=True)
+        self._render()
 
     def _on_copy_image(self, event: tk.Event | None = None) -> str:
         self.copy_image_to_clipboard()

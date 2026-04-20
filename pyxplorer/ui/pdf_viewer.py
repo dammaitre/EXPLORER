@@ -89,6 +89,7 @@ class PDFViewer(ttk.Frame):
         self._drag_anchor: tuple[float, float] | None = None
         self._drag_current: tuple[float, float] | None = None
         self._zoom = _DEFAULT_ZOOM
+        self._rotation: int = 0
         self._pending_zoom_anchor: dict | None = None
         self._zoom_after: str | None = None      # debounce handle
         self._canvas_needs_clear: bool = False   # wipe canvas on first new page arrival
@@ -120,6 +121,20 @@ class PDFViewer(ttk.Frame):
             variable=self._follow_selection,
             style="TCheckbutton",
         ).pack(side=tk.RIGHT, padx=(0, 12))
+
+        ttk.Button(
+            top_bar,
+            text="↻",
+            width=2,
+            command=self._rotate_cw,
+        ).pack(side=tk.RIGHT, padx=(0, 2))
+
+        ttk.Button(
+            top_bar,
+            text="↺",
+            width=2,
+            command=self._rotate_ccw,
+        ).pack(side=tk.RIGHT, padx=(0, 2))
 
         viewport = ttk.Frame(self, style="LowerContent.TFrame")
         viewport.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -226,6 +241,7 @@ class PDFViewer(ttk.Frame):
         except Exception:
             pass
         self._doc = None
+        self._rotation = 0
         self._canvas.delete("all")
         self._canvas.configure(scrollregion=(0, 0, 0, 0))
         self._message_var.set("PDF viewer ready")
@@ -270,6 +286,16 @@ class PDFViewer(ttk.Frame):
         self._canvas.configure(scrollregion=(0, 0, 0, 0))
         self._rebuild_page_layouts()
         self._request_visible_pages(priority=True)
+
+    def _rotate_cw(self) -> None:
+        self._rotation = (self._rotation + 90) % 360
+        if self._doc is not None:
+            self._rerender_current_pdf()
+
+    def _rotate_ccw(self) -> None:
+        self._rotation = (self._rotation - 90) % 360
+        if self._doc is not None:
+            self._rerender_current_pdf()
 
     def _rerender_current_pdf(self) -> None:
         if self._doc is None or self._page_count <= 0:
@@ -638,7 +664,7 @@ class PDFViewer(ttk.Frame):
         self._pending_pages.update(indices)
         self._worker = threading.Thread(
             target=self._render_pages,
-            args=(token, indices, self._zoom, self._doc_bytes, self._doc_path),
+            args=(token, indices, self._zoom, self._rotation, self._doc_bytes, self._doc_path),
             daemon=True,
         )
         self._worker.start()
@@ -649,6 +675,7 @@ class PDFViewer(ttk.Frame):
         token: int,
         indices: list[int],
         zoom: float,
+        rotation: int,
         doc_bytes: bytes | None,
         doc_path: str | None,
     ) -> None:
@@ -666,7 +693,7 @@ class PDFViewer(ttk.Frame):
                 if token != self._load_token:
                     return
                 try:
-                    payload = self._render_page(worker_doc, index, zoom)
+                    payload = self._render_page(worker_doc, index, zoom, rotation)
                     self._render_queue.put(("page", token, payload))
                 except Exception as exc:
                     self._render_queue.put((
@@ -701,8 +728,12 @@ class PDFViewer(ttk.Frame):
                 rect = self._doc.load_page(index).rect
                 page_w, page_h = rect.width, rect.height
                 self._page_dim_cache[index] = (page_w, page_h)
-            render_width = max(1, int(round(page_w * self._zoom)))
-            render_height = max(1, int(round(page_h * self._zoom)))
+            if self._rotation % 180 == 90:
+                render_width = max(1, int(round(page_h * self._zoom)))
+                render_height = max(1, int(round(page_w * self._zoom)))
+            else:
+                render_width = max(1, int(round(page_w * self._zoom)))
+                render_height = max(1, int(round(page_h * self._zoom)))
             layouts.append({
                 "index": index,
                 "x": 0.0,
@@ -780,12 +811,12 @@ class PDFViewer(ttk.Frame):
         self._visible_after = None
         self._request_visible_pages()
 
-    def _render_page(self, doc, index: int, zoom: float) -> dict:
+    def _render_page(self, doc, index: int, zoom: float, rotation: int = 0) -> dict:
         if fitz is None:
             raise RuntimeError("PyMuPDF is unavailable.")
         page = doc.load_page(index)
         rect = page.rect
-        matrix = fitz.Matrix(zoom, zoom)
+        matrix = fitz.Matrix(zoom, zoom).prerotate(rotation)
         try:
             pix = page.get_pixmap(matrix=matrix, alpha=False, annots=True)
         except Exception:
