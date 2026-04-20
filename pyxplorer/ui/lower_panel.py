@@ -216,7 +216,7 @@ class LowerPanel(ttk.Frame):
         self.show_tab("pdf")
         paths = list(self.state.selection)
         if len(paths) != 1:
-            self._pdf_viewer.show_message("Select a single PDF file and press Ctrl+Alt+P.")
+            self._pdf_viewer.show_message("Select a single PDF file and press P.")
             self._status_cb("PDF load skipped: select a single PDF file")
             return
 
@@ -263,7 +263,7 @@ class LowerPanel(ttk.Frame):
         paths = list(self.state.selection)
         if len(paths) != 1:
             self._image_viewer.show_message(
-                "Select a single image file and press Ctrl+Alt+I."
+                "Select a single image file and press I."
             )
             self._status_cb("Image load skipped: select a single image file")
             return

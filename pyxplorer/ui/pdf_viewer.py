@@ -97,7 +97,7 @@ class PDFViewer(ttk.Frame):
         self._page_dim_cache: dict[int, tuple[float, float]] = {}  # index → (w_pt, h_pt)
 
         self._build()
-        self.show_message("Select a single PDF file and press Ctrl+Alt+P.")
+        self.show_message("Select a single PDF file and press P.")
 
     def _build(self) -> None:
         self._message_var = tk.StringVar(value="")

@@ -110,13 +110,13 @@ def show_help_window(root: tk.Tk) -> None:
             ("", "(tags shown as 'aka <tag>' in file list)"),
         ]),
         ("LOWER PANEL (P/T/N/I)", [
-            ("Ctrl+Alt+P", "Show PDF panel and load selected PDF"),
+            ("P", "Show PDF panel and load selected PDF"),
             ("  Ctrl+C", "Copy selected text to OS clipboard (in PDF)"),
             ("  Ctrl+I", "Copy selected region as image to clipboard (in PDF)"),
             ("  Ctrl+O", "OCR selected region and copy text (in PDF)"),
-            ("Ctrl+Alt+T", "Show terminal panel and restart in current dir"),
-            ("Ctrl+Alt+N", "Show temp notes panel"),
-            ("Ctrl+Alt+I", "Show image panel and load selected image"),
+            ("T", "Show terminal panel and restart in current dir"),
+            ("N", "Show temp notes panel"),
+            ("I", "Show image panel and load selected image"),
             ("Escape", "Hide lower panel (or collapse selection)"),
         ]),
         ("UTILITIES", [

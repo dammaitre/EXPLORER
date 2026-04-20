@@ -275,7 +275,7 @@ class ImageViewer(ttk.Frame):
         self._clear_selection()
         self._canvas.delete("all")
         self._canvas.configure(scrollregion=(0, 0, 0, 0))
-        self.show_message("Select an image file and press Ctrl+Alt+I.")
+        self.show_message("Select an image file and press I.")
         self._status_cb("Image viewer ready")
 
     def load_image(self, path: str) -> None:

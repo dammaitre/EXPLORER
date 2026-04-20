@@ -537,8 +537,10 @@ def bind_keys(
         root, state, _refresh, main_frame._tree.focus_set
     )))
 
-    # ── Lower PDF viewer (Ctrl+Alt+P) ─────────────────────────────────
+    # ── Lower PDF viewer (P / Ctrl+Alt+P) ────────────────────────────
     if open_pdf_cb is not None:
+        root.bind("<p>", _guard(open_pdf_cb))
+        root.bind("<P>", _guard(open_pdf_cb))
         root.bind("<Control-Alt-p>", lambda e: open_pdf_cb())
         root.bind("<Control-Alt-P>", lambda e: open_pdf_cb())
 
@@ -558,18 +560,24 @@ def bind_keys(
         root.bind("<Control-O>", lambda e: pdf_ocr_cb() or "break")
 
 
-    # ── Lower terminal (Ctrl+Alt+T) ──────────────────────────────────
+    # ── Lower terminal (T / Ctrl+Alt+T) ──────────────────────────────
     if open_terminal_cb is not None:
+        root.bind("<t>", _guard(open_terminal_cb))
+        root.bind("<T>", _guard(open_terminal_cb))
         root.bind("<Control-Alt-t>", lambda e: open_terminal_cb())
         root.bind("<Control-Alt-T>", lambda e: open_terminal_cb())
 
-    # ── Lower temp notes (Ctrl+Alt+N) ────────────────────────────────────
+    # ── Lower temp notes (N / Ctrl+Alt+N) ────────────────────────────
     if open_notes_cb is not None:
+        root.bind("<n>", _guard(open_notes_cb))
+        root.bind("<N>", _guard(open_notes_cb))
         root.bind("<Control-Alt-n>", lambda e: open_notes_cb())
         root.bind("<Control-Alt-N>", lambda e: open_notes_cb())
 
-    # ── Lower image viewer (Ctrl+Alt+I) ──────────────────────────────
+    # ── Lower image viewer (I / Ctrl+Alt+I) ──────────────────────────
     if open_image_cb is not None:
+        root.bind("<i>", _guard(open_image_cb))
+        root.bind("<I>", _guard(open_image_cb))
         root.bind("<Control-Alt-i>", lambda e: open_image_cb())
         root.bind("<Control-Alt-I>", lambda e: open_image_cb())
 
