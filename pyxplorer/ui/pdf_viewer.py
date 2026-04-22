@@ -986,8 +986,9 @@ class PDFViewer(ttk.Frame):
             return "break"
         viewport_top = self._canvas.canvasy(0)
         layout = self._page_layouts[current]
-        # If already near the top of the current page, jump to the previous one.
-        if abs(layout["y"] - viewport_top) < 10:
+        # Threshold must exceed yscrollincrement (24px) because yview_moveto snaps
+        # to the nearest scroll increment, causing up to 23px of rounding error.
+        if abs(layout["y"] - viewport_top) < 25:
             self._scroll_to_page(current - 1)
         else:
             self._scroll_to_page(current)

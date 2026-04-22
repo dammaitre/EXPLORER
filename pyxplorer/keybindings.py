@@ -412,7 +412,7 @@ def bind_keys(
     root.bind("<Control-N>", _guard(lambda: _copy_name(root, state, main_frame, left_panel)))
 
     # ── New folder dialog (Ctrl+Shift+X) ───────────────────────────────
-    root.bind("<Control-X>", _guard(lambda: _new_folder_dialog(root, state, _refresh)))
+    root.bind("<Control-X>", lambda e: _new_folder_dialog(root, state, _refresh))
 
     # ── Set tag on selected item(s) (Ctrl+T) ───────────────────────────
     root.bind("<Control-t>", _guard(lambda: _set_tag_dialog(root, state, _refresh, status_cb)))
@@ -422,7 +422,7 @@ def bind_keys(
     root.bind("<Control-R>", lambda e: _reload_settings(status_cb, on_reload_cb=reload_settings_cb))
 
     # ── New window at current dir (Ctrl+N) ─────────────────────────────
-    root.bind("<Control-n>", _guard(lambda: _open_new_window(state.current_dir)))
+    root.bind("<Control-n>", lambda e: _open_new_window(state.current_dir))
 
     # ── Run dialog ─────────────────────────────────────────────────────
     root.bind("<Control-r>", lambda e: top_bar.open_run_dialog())
@@ -448,7 +448,7 @@ def bind_keys(
             else:
                 _search_holder.append(dlg)
 
-    root.bind("<Control-f>", _guard(_open_search))
+    root.bind("<Control-f>", lambda e: _open_search())
 
     # ── Tab: toggle focus between main frame and sub-windows / lower panel ──
     def _widget_in_toplevel(widget, toplevel) -> bool:

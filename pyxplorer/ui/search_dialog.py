@@ -955,6 +955,8 @@ class SearchDialog:
             except Exception:
                 pass
         self._dlg.destroy()
+        if self._focus_main_cb:
+            self._root.after(0, self._focus_main_cb)
 
     # ------------------------------------------------------------------
     # Public interface
