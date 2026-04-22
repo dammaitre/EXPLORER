@@ -274,7 +274,9 @@ class PDFViewer(ttk.Frame):
             self._status_cb(f"PDF open error: {exc}")
             return
 
+        saved_rotation = self._rotation
         self.unload()
+        self._rotation = saved_rotation
         self._doc = doc
         self._doc_bytes = pdf_bytes
         self._doc_path = norm

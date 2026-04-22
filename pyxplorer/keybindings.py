@@ -595,7 +595,8 @@ def bind_keys(
                 focused = None
             if focused is main_frame._tree:
                 main_frame.collapse_selection_to_last()
-                return "break"
+                if lower_panel_visible_cb and not lower_panel_visible_cb():
+                    return "break"
             # Cancel an in-progress PDF load before hiding the panel
             if cancel_pdf_load_cb is not None and cancel_pdf_load_cb():
                 return "break"

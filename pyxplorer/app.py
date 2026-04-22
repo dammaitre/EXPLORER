@@ -264,6 +264,7 @@ class App:
         self._scan_token: CancelToken | None = None
         self._lower_visible: bool = False
         self._lower_height: int = _LOWER_DEFAULT_H
+        self._lower_ever_shown: bool = False
         self._heuristics_win: HeuristicsWindow | None = None
         self._heuristic_run_token: int = 0
 
@@ -382,10 +383,24 @@ class App:
             status_cb=self.status_bar.set_status,
         )
 
+    def _compute_first_lower_height(self) -> int:
+        try:
+            total = max(self.body_paned.winfo_height(), 520)
+            tree = self.main_frame._tree
+            tree_h = max(1, tree.winfo_height())
+            n_items = len(tree.get_children())
+            slack = max(0, tree_h - n_items * _RH)
+            return max(_LOWER_MIN_H, min(total // 2, slack))
+        except Exception:
+            return _LOWER_DEFAULT_H
+
     def _ensure_lower_panel_visible(self) -> None:
         if self._lower_visible:
             self.lower_panel.focus_active_tab()
             return
+        if not self._lower_ever_shown:
+            self._lower_height = self._compute_first_lower_height()
+            self._lower_ever_shown = True
         self.body_paned.add(
             self.lower_panel,
             minsize=_LOWER_MIN_H,
@@ -463,6 +478,7 @@ class App:
             self.root,
             on_run_cb=self._run_heuristic_script,
             on_close_cb=self._on_heuristics_close,
+            focus_main_cb=self.main_frame._tree.focus_set,
         )
         self.status_bar.set_status("Heuristics window opened")
 

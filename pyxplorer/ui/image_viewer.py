@@ -77,6 +77,7 @@ class ImageViewer(ttk.Frame):
         self._thumbnail:    _PilImage.Image | None        = None  # type: ignore[name-defined]
         self._photo:        _PilImageTk.PhotoImage | None = None  # type: ignore[name-defined]
         self._zoom:         float       = _DEFAULT_ZOOM
+        self._rotation:     int         = 0
         self._loading:      bool        = False
         self._load_token:   int         = 0
         self._canvas_image: int | None  = None   # canvas item id
@@ -351,6 +352,8 @@ class ImageViewer(ttk.Frame):
             self.show_message(f"Failed to load image: {error}")
             self._status_cb(f"Image load error: {error}")
             return
+        if self._rotation:
+            img = img.rotate(self._rotation, expand=True)
         self._thumbnail = img
         fname = os.path.basename(to_display(self._path or ""))
         w, h = img.size
@@ -567,12 +570,14 @@ class ImageViewer(ttk.Frame):
     def _rotate_cw(self) -> None:
         if self._thumbnail is None:
             return
+        self._rotation = (self._rotation - 90) % 360
         self._thumbnail = self._thumbnail.rotate(-90, expand=True)
         self._render()
 
     def _rotate_ccw(self) -> None:
         if self._thumbnail is None:
             return
+        self._rotation = (self._rotation + 90) % 360
         self._thumbnail = self._thumbnail.rotate(90, expand=True)
         self._render()
 

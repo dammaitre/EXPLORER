@@ -1,3 +1,4 @@
+import os
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
@@ -19,10 +20,12 @@ class HeuristicsWindow:
         root: tk.Tk,
         on_run_cb: Callable[[str, str], None],
         on_close_cb: Callable[[], None],
+        focus_main_cb: Callable[[], None] | None = None,
     ):
         self.root = root
         self._on_run_cb = on_run_cb
         self._on_close_cb = on_close_cb
+        self._focus_main_cb = focus_main_cb
         self._scripts: list[Path] = []
         self._buttons: list[ttk.Button] = []
         self._selected_idx: int = 0
@@ -43,20 +46,33 @@ class HeuristicsWindow:
         self.win.bind("<Return>", self._on_enter)
         self.win.bind("<Control-h>", lambda e: self.close())
         self.win.bind("<Control-H>", lambda e: self.close())
+        self.win.bind("<Tab>", self._on_tab_to_main)
         self.win.focus_set()
 
     def _build(self) -> None:
         shell = ttk.Frame(self.win)
         shell.pack(fill=tk.BOTH, expand=True)
 
+        header = ttk.Frame(shell)
+        header.pack(fill=tk.X)
         ttk.Label(
-            shell,
-            text="Heuristics (python script.py PATH)",
+            header,
+            text="Heuristics",
             font=(_FONT, _SZ_S),
             foreground=_TEXT_MUTE,
             anchor="w",
             padding=(12, 10),
-        ).pack(fill=tk.X)
+        ).pack(side=tk.LEFT)
+        link = tk.Label(
+            header,
+            text="open scripts folder",
+            font=(_FONT, _SZ_S),
+            fg=_T["accent"],
+            bg=_BG,
+            cursor="hand2",
+        )
+        link.pack(side=tk.RIGHT, padx=(0, 12))
+        link.bind("<Button-1>", lambda e: os.startfile(str(scripts_dir())))
 
         self._list_frame = ttk.Frame(shell)
         self._list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
@@ -85,6 +101,11 @@ class HeuristicsWindow:
             self._buttons.append(button)
 
         self._refresh_selection()
+
+    def _on_tab_to_main(self, event=None) -> str:
+        if self._focus_main_cb:
+            self._focus_main_cb()
+        return "break"
 
     def close(self) -> None:
         if not self.alive:
