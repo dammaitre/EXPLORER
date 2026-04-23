@@ -136,6 +136,11 @@ class StatusBar(ttk.Frame):
         self._progress.configure(value=pct)
         self._pct_var.set(f"{pct}%")
 
+    def update_transfer_label(self, text: str) -> None:
+        """Update the transfer description label (e.g. 'Deleting 3/47 items…')."""
+        if self._transfer_active:
+            self._transfer_text_var.set(text)
+
     def stop_transfer(self) -> None:
         """Hide transfer progress. Navigation will not affect this."""
         if not self._transfer_active:

@@ -286,6 +286,7 @@ class App:
             transfer_start_cb=self.status_bar.start_transfer,
             transfer_progress_cb=self.status_bar.update_transfer_progress,
             transfer_stop_cb=self.status_bar.stop_transfer,
+            transfer_label_cb=self.status_bar.update_transfer_label,
             cancel_pdf_load_cb=self.lower_panel.cancel_pdf_if_loading,
             open_image_cb=self.open_image_panel,
             cancel_image_load_cb=self.lower_panel.cancel_image_if_loading,

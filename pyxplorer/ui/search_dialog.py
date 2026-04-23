@@ -500,6 +500,14 @@ class SearchDialog:
                     if snippets:
                         self._tree.item(iid, open=True)
 
+                elif kind == "pdf_scanning_progress":
+                    _, token, pdf_name = msg
+                    if token != self._content_token:
+                        continue
+                    n = len(self._tree.get_children())
+                    prefix = f"{n} result(s) so far — " if n else ""
+                    self._status_var.set(f"{prefix}scanning PDF content : {pdf_name}")
+
                 elif kind == "content_search_done":
                     _, token, hits = msg
                     if token != self._content_token:
@@ -914,12 +922,12 @@ class SearchDialog:
                 try:
                     snippets, total = fut.result()
                 except Exception:
-                    continue
-                if total == 0:
-                    continue
-                content_hits += 1
-                self._queue.put(("pdf_content_result", token_snap,
-                                 name, rel, full, snippets, total))
+                    snippets, total = [], 0
+                if total > 0:
+                    content_hits += 1
+                    self._queue.put(("pdf_content_result", token_snap,
+                                     name, rel, full, snippets, total))
+                self._queue.put(("pdf_scanning_progress", token_snap, name))
 
             if self._content_token == token_snap:
                 self._queue.put(("content_search_done", token_snap, content_hits))

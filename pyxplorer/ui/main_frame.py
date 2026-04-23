@@ -1044,7 +1044,7 @@ class MainFrame(ttk.Frame):
         return out
 
     def _drop_destination_from_event(self, event) -> str:
-        item = self._tree.identify_row(getattr(event, "y", 0))
+        item = self._tree.identify_row(self._event_tree_y(event))
         if item and item != self._more_iid:
             row = self._item_data.get(item)
             if row and row["is_dir"]:

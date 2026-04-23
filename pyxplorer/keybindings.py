@@ -7,6 +7,7 @@ import os
 import sys
 import subprocess
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -102,6 +103,7 @@ def _do_cut(state) -> None:
 
 
 _paste_busy = False   # re-entrancy guard for async paste worker
+_delete_busy = False  # re-entrancy guard for async delete worker
 
 
 def _do_paste(
@@ -360,6 +362,7 @@ def bind_keys(
     transfer_start_cb=None,
     transfer_progress_cb=None,
     transfer_stop_cb=None,
+    transfer_label_cb=None,
     cancel_pdf_load_cb=None,
     open_image_cb=None,
     cancel_image_load_cb=None,
@@ -510,6 +513,10 @@ def bind_keys(
 
     # ── Delete (Suppr) ─────────────────────────────────────────────────
     def _do_delete():
+        global _delete_busy
+        if _delete_busy:
+            status_cb("Delete already running…")
+            return
         paths = list(state.selection)
         if not paths:
             return
@@ -523,12 +530,49 @@ def bind_keys(
             parent=root,
         ):
             return
-        try:
-            delete_items(paths)
-        except Exception as exc:
-            messagebox.showerror("Delete error", str(exc), parent=root)
-        state.selection = []
-        _refresh()
+
+        _delete_busy = True
+        status_cb(f"Deleting {len(paths)} item(s)…")
+        if transfer_start_cb is not None:
+            root.after(0, lambda cb=transfer_start_cb: cb(f"Deleting {len(paths)} item(s)…"))
+
+        def _worker() -> None:
+            err: Exception | None = None
+            last_ui: list[float] = [0.0]
+
+            def _on_progress(done: int, total: int) -> None:
+                now = time.monotonic()
+                if done < total and now - last_ui[0] < 0.08:
+                    return
+                last_ui[0] = now
+                pct = int(done * 100 / max(1, total))
+                label = f"Deleting {done}/{total} items…"
+                if transfer_progress_cb is not None:
+                    root.after(0, lambda p=pct, cb=transfer_progress_cb: cb(p))
+                if transfer_label_cb is not None:
+                    root.after(0, lambda t=label, cb=transfer_label_cb: cb(t))
+
+            try:
+                delete_items(paths, progress_cb=_on_progress)
+            except Exception as exc:
+                err = exc
+
+            def _finish() -> None:
+                global _delete_busy
+                _delete_busy = False
+                if transfer_stop_cb is not None:
+                    transfer_stop_cb()
+                if err is not None:
+                    status_cb(f"Delete failed: {err}")
+                    messagebox.showerror("Delete error", str(err), parent=root)
+                    return
+                state.selection = []
+                status_cb(f"Deleted {len(paths)} item(s)")
+                _refresh()
+
+            root.after(0, _finish)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     root.bind("<Delete>", _guard(lambda: _do_delete()))
 

@@ -133,8 +133,17 @@ def _sub_progress(
     return _emit
 
 
-def _run_robocopy(args: list[str], progress_cb: Callable[[int], None] | None = None) -> None:
-    """Run robocopy with the given args. Exit codes 0-7 are success; 8+ are errors."""
+def _run_robocopy(
+    args: list[str],
+    progress_cb: Callable[[int], None] | None = None,
+    total_items: int | None = None,
+) -> None:
+    """Run robocopy with the given args. Exit codes 0-7 are success; 8+ are errors.
+
+    When total_items is given, progress is derived from completed-file count (each
+    "100%" line in robocopy output = one file done) for smooth per-file granularity.
+    Without total_items, falls back to tracking the max percentage seen.
+    """
     proc = subprocess.Popen(
         ["robocopy"] + args,
         stdout=subprocess.PIPE,
@@ -144,6 +153,7 @@ def _run_robocopy(args: list[str], progress_cb: Callable[[int], None] | None = N
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
     last_pct = 0
+    completed_files = 0
     lines: list[str] = []
     if proc.stdout is not None:
         for line in proc.stdout:
@@ -155,10 +165,19 @@ def _run_robocopy(args: list[str], progress_cb: Callable[[int], None] | None = N
                 pct = max(0, min(100, int(m.group(1))))
             except Exception:
                 continue
-            if pct >= last_pct:
-                last_pct = pct
+            if total_items is not None and total_items > 0:
+                if pct == 100:
+                    completed_files += 1
+                # Interpolate: k completed files + current file progress (0 after 100)
+                in_progress = 0 if pct == 100 else pct
+                overall = int((completed_files * 100 + in_progress) / total_items)
                 if progress_cb is not None:
-                    progress_cb(last_pct)
+                    progress_cb(overall)
+            else:
+                if pct >= last_pct:
+                    last_pct = pct
+                    if progress_cb is not None:
+                        progress_cb(last_pct)
 
     result_code = proc.wait()
     if result_code >= 8:
@@ -193,17 +212,19 @@ def copy_items(
                 unique = _unique_copy_name(dst_display, name)
                 unique_name = os.path.basename(unique)
                 if os.path.isdir(s):
-                    _run_robocopy([s_display, unique, "/E", "/COPY:DAT"] + _ROBOCOPY_FLAGS, progress_cb=item_cb)
+                    _run_robocopy([s_display, unique, "/E", "/COPY:DAT"] + _ROBOCOPY_FLAGS,
+                                  progress_cb=item_cb, total_items=_count_files_in_dir(s_display))
                 else:
                     src_dir = str(Path(s_display).parent)
-                    _run_robocopy([src_dir, dst_display, name, f"/COPYALL", "/A-:SH"] + _ROBOCOPY_FLAGS, progress_cb=item_cb)
+                    _run_robocopy([src_dir, dst_display, name, "/COPY:DAT"] + _ROBOCOPY_FLAGS, progress_cb=item_cb)
                     # rename to unique name
                     os.rename(
                         normalize(os.path.join(dst_display, name)),
                         normalize(unique),
                     )
             elif os.path.isdir(s):
-                _run_robocopy([s_display, dest_display, "/E", "/COPY:DAT"] + _ROBOCOPY_FLAGS, progress_cb=item_cb)
+                _run_robocopy([s_display, dest_display, "/E", "/COPY:DAT"] + _ROBOCOPY_FLAGS,
+                              progress_cb=item_cb, total_items=_count_files_in_dir(s_display))
             else:
                 src_dir = str(Path(s_display).parent)
                 try:
@@ -250,7 +271,8 @@ def move_items(
                     item_cb(100)
                 continue  # moving a file to the same location is a no-op
             if os.path.isdir(s):
-                _run_robocopy([s_display, dest_display, "/E", "/MOVE", "/COPY:DAT"] + _ROBOCOPY_FLAGS, progress_cb=item_cb)
+                _run_robocopy([s_display, dest_display, "/E", "/MOVE", "/COPY:DAT"] + _ROBOCOPY_FLAGS,
+                              progress_cb=item_cb, total_items=_count_files_in_dir(s_display))
                 # robocopy /MOVE leaves empty source dir; clean it up
                 try:
                     if os.path.exists(s):
@@ -267,14 +289,72 @@ def move_items(
                 item_cb(100)
 
 
-def delete_items(paths: list[str]) -> None:
-    """Permanently delete files and directories (no recycle bin)."""
+def _count_files_in_dir(path: str) -> int:
+    """Count files recursively in a directory (used for robocopy progress)."""
+    count = 0
+    stack = [normalize(path)]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as it:
+                for entry in it:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        else:
+                            count += 1
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return max(1, count)
+
+
+def delete_items(
+    paths: list[str],
+    progress_cb: Callable[[int, int], None] | None = None,
+) -> None:
+    """Permanently delete files and directories (no recycle bin).
+
+    Every scandir call goes through normalize() so long-path prefixes are
+    applied at each tree level, not just the root.
+    progress_cb(done, total) is called after each item is removed.
+    """
+    ops: list[tuple[str, bool]] = []  # (normalized_path, is_dir)
+
     for p in paths:
         s = normalize(p)
         if os.path.isdir(s) and not os.path.islink(s):
-            shutil.rmtree(s)
+            # Iterative post-order traversal: files collected immediately,
+            # dirs collected after all their children (bottom-up).
+            stack: list[tuple[str, bool]] = [(s, False)]
+            while stack:
+                current, visited = stack.pop()
+                if visited:
+                    ops.append((current, True))
+                    continue
+                stack.append((current, True))
+                try:
+                    with os.scandir(normalize(current)) as it:
+                        for entry in it:
+                            ep = normalize(entry.path)
+                            if entry.is_dir(follow_symlinks=False):
+                                stack.append((ep, False))
+                            else:
+                                ops.append((ep, False))
+                except OSError:
+                    pass
         else:
-            os.remove(s)
+            ops.append((s, False))
+
+    total = len(ops)
+    for done, (item_path, is_dir) in enumerate(ops, 1):
+        if is_dir:
+            os.rmdir(item_path)
+        else:
+            os.remove(item_path)
+        if progress_cb is not None:
+            progress_cb(done, total)
 
 
 def make_dir(path: str) -> None:

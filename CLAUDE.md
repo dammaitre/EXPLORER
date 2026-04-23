@@ -291,10 +291,10 @@ Clipboard/file-operation shortcuts are wrapped in `_guard()` to avoid conflicts 
 | `Ctrl+N` | Open current directory in a new Pyxplorer window |
 | `Ctrl+R` | Open run dialog (Win+R style) |
 | `Ctrl+F` | Open regex search dialog |
-| `Ctrl+Alt+P` | Show PDF tab and load selected PDF |
-| `Ctrl+Alt+I` | Show Image tab and load selected image |
-| `Ctrl+Alt+T` | Show Terminal tab and reload PowerShell |
-| `Ctrl+Alt+N` | Show Notes tab and reset temp file |
+| `P` | Show PDF tab and load selected PDF |
+| `I` | Show Image tab and load selected image |
+| `T` | Show Terminal tab and reload PowerShell |
+| `N` | Show Notes tab and reset temp file |
 | `Ctrl+H` | Toggle heuristics window |
 | `Escape` | Hide lower panel |
 | `Delete` | Permanently delete selected items (confirm dialog) |
