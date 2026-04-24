@@ -47,13 +47,19 @@ class SearchDialog:
     """
 
     def __init__(self, root: tk.Tk, state, navigate_cb,
-                 open_pdf_cb=None, open_image_cb=None, focus_main_cb=None):
+                 open_pdf_cb=None, open_image_cb=None, focus_main_cb=None,
+                 open_new_window_cb=None, new_folder_cb=None,
+                 copy_files_cb=None, paste_files_cb=None):
         self._root        = root
         self._state       = state
         self._navigate_cb = navigate_cb
         self._open_pdf_cb = open_pdf_cb
         self._open_image_cb = open_image_cb
         self._focus_main_cb = focus_main_cb
+        self._open_new_window_cb = open_new_window_cb
+        self._copy_files_cb = copy_files_cb
+        self._paste_files_cb = paste_files_cb
+        self._new_folder_cb = new_folder_cb
         self._original_dir = normalize(state.current_dir)  # Capture original dir when dialog opens
 
         self._token:      CancelToken | None = None
@@ -72,6 +78,7 @@ class SearchDialog:
 
         self._match_content_var = tk.BooleanVar(value=False)
         self._content_token: int = 0
+        self._content_progress: tuple[int, int] = (0, 0)  # (done, total) — written by worker, read by poll
         self._current_pattern: str = ""
         self._snippet_chars: int = 60
         self._result_by_path: dict[str, str] = {}   # normalize(path) → iid, for dedup
@@ -228,6 +235,8 @@ class SearchDialog:
         self._tree.bind("<Down>",            self._on_down)
         self._tree.bind("<Control-h>",       self._on_run_heuristic_hotkey)
         self._tree.bind("<Control-H>",       self._on_run_heuristic_hotkey)
+        self._tree.bind("<Control-c>",       lambda _: self._copy_files_cb() if self._copy_files_cb else None)
+        self._tree.bind("<Control-v>",       lambda _: self._paste_files_cb() if self._paste_files_cb else None)
         # Ctrl+Shift+C: capital C in tkinter means Shift is held
         self._tree.bind("<Control-C>",       self._on_copy_path)
         self._dlg.bind("<Control-C>",        self._on_copy_path)
@@ -245,6 +254,10 @@ class SearchDialog:
         self._dlg.bind("<Return>",           self._on_return_key)
         self._dlg.bind("<Tab>",              self._on_tab_to_main)
         self._dlg.bind("<Escape>",           lambda _: self._on_close())
+        # Re-expose root shortcuts that are unreachable when this Toplevel has focus
+        self._dlg.bind("<Control-f>",        lambda _: self._entry.focus_set() or "break")
+        self._dlg.bind("<Control-n>",        lambda _: self._open_new_window_cb() if self._open_new_window_cb else None)
+        self._dlg.bind("<Control-X>",        lambda _: self._new_folder_cb() if self._new_folder_cb else None)
 
         self._entry.focus_set()
 
@@ -500,14 +513,6 @@ class SearchDialog:
                     if snippets:
                         self._tree.item(iid, open=True)
 
-                elif kind == "pdf_scanning_progress":
-                    _, token, pdf_name = msg
-                    if token != self._content_token:
-                        continue
-                    n = len(self._tree.get_children())
-                    prefix = f"{n} result(s) so far — " if n else ""
-                    self._status_var.set(f"{prefix}scanning PDF content : {pdf_name}")
-
                 elif kind == "content_search_done":
                     _, token, hits = msg
                     if token != self._content_token:
@@ -520,6 +525,10 @@ class SearchDialog:
 
         except Exception:
             pass
+
+        done, total = self._content_progress
+        if 0 < done < total:
+            self._status_var.set(f"Scanning PDF content… {done}/{total}")
 
         self._schedule_poll()
 
@@ -873,15 +882,7 @@ class SearchDialog:
 
     def _content_search_all(self, root_dir: str, pattern: str,
                              token_snap: int, snippet_chars: int) -> None:
-        """Walk root_dir, search every PDF's content, push pdf_content_result messages.
-
-        PDF parsing runs in a ProcessPoolExecutor so fitz's GIL-holding C code
-        does not stall the tkinter main thread.  Two phases:
-          1. Walk the tree and collect PDF paths (fast, no parsing).
-          2. Submit all PDFs to the process pool and stream results as they
-             complete, so the UI stays responsive throughout.
-        """
-        from concurrent.futures import ProcessPoolExecutor, as_completed
+        """Walk root_dir, search every PDF's content, push pdf_content_result messages."""
         from ..core.search import parse_pdf_content
 
         # Phase 1 — fast directory walk, no PDF I/O
@@ -894,7 +895,7 @@ class SearchDialog:
                     return
                 if name.lower().endswith(".pdf"):
                     full = normalize(os.path.join(dirpath, name))
-                    rel  = os.path.relpath(full, root_dir)
+                    rel  = os.path.relpath(to_display(full), to_display(root_dir))
                     pdf_tasks.append((name, rel, full))
 
         if not pdf_tasks:
@@ -905,34 +906,33 @@ class SearchDialog:
         if self._content_token != token_snap:
             return
 
-        # Phase 2 — parse PDFs in parallel subprocesses
-        n_workers = min(4, max(1, os.cpu_count() or 2), len(pdf_tasks))
+        # Phase 2 — parse PDFs directly in this background thread.
+        # Progress is written to self._content_progress and read by the 100 ms
+        # poll tick — this is the only reliable way to show live feedback when
+        # queue messages can arrive faster than Tkinter redraws.
+        total_pdfs = len(pdf_tasks)
+        self._content_progress = (0, total_pdfs)
         content_hits = 0
-        pool = ProcessPoolExecutor(max_workers=n_workers)
-        futures = {
-            pool.submit(parse_pdf_content, full, pattern, snippet_chars): (name, rel, full)
-            for name, rel, full in pdf_tasks
-        }
-
+        done_count = 0
         try:
-            for fut in as_completed(futures):
+            for name, rel, full in pdf_tasks:
                 if self._content_token != token_snap:
                     return
-                name, rel, full = futures[fut]
                 try:
-                    snippets, total = fut.result()
+                    snippets, total = parse_pdf_content(full, pattern, snippet_chars)
                 except Exception:
                     snippets, total = [], 0
+                done_count += 1
+                self._content_progress = (done_count, total_pdfs)
                 if total > 0:
                     content_hits += 1
                     self._queue.put(("pdf_content_result", token_snap,
                                      name, rel, full, snippets, total))
-                self._queue.put(("pdf_scanning_progress", token_snap, name))
 
             if self._content_token == token_snap:
                 self._queue.put(("content_search_done", token_snap, content_hits))
         finally:
-            pool.shutdown(wait=False, cancel_futures=True)
+            self._content_progress = (0, 0)
 
     # ------------------------------------------------------------------
     # Cleanup

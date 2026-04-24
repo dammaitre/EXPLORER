@@ -445,6 +445,15 @@ def bind_keys(
                 open_pdf_cb=open_pdf_cb,
                 open_image_cb=open_image_cb,
                 focus_main_cb=main_frame._tree.focus_set,
+                open_new_window_cb=lambda: _open_new_window(state.current_dir),
+                new_folder_cb=lambda: _new_folder_dialog(root, state, _refresh),
+                copy_files_cb=lambda: _do_copy(state),
+                paste_files_cb=lambda: _do_paste(
+                    state, root, _refresh, status_cb,
+                    transfer_start_cb=transfer_start_cb,
+                    transfer_progress_cb=transfer_progress_cb,
+                    transfer_stop_cb=transfer_stop_cb,
+                ),
             )
             if _search_holder:
                 _search_holder[0] = dlg
