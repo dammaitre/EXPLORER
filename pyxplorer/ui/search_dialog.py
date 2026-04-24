@@ -79,6 +79,7 @@ class SearchDialog:
         self._match_content_var = tk.BooleanVar(value=False)
         self._content_token: int = 0
         self._content_progress: tuple[int, int] = (0, 0)  # (done, total) — written by worker, read by poll
+        self._content_pool = None  # ProcessPoolExecutor kept alive across PDF iterations
         self._current_pattern: str = ""
         self._snippet_chars: int = 60
         self._result_by_path: dict[str, str] = {}   # normalize(path) → iid, for dedup
@@ -338,6 +339,8 @@ class SearchDialog:
         self._size_token += 1
         self._heuristic_token += 1
         self._content_token += 1
+        if self._content_pool is not None:
+            self._content_pool.shutdown(wait=False, cancel_futures=True)
         self._current_pattern = pattern
         # Capture snippet char width from path column at search start (UI thread)
         try:
@@ -883,6 +886,7 @@ class SearchDialog:
     def _content_search_all(self, root_dir: str, pattern: str,
                              token_snap: int, snippet_chars: int) -> None:
         """Walk root_dir, search every PDF's content, push pdf_content_result messages."""
+        from concurrent.futures import ProcessPoolExecutor
         from ..core.search import parse_pdf_content
 
         # Phase 1 — fast directory walk, no PDF I/O
@@ -906,20 +910,24 @@ class SearchDialog:
         if self._content_token != token_snap:
             return
 
-        # Phase 2 — parse PDFs directly in this background thread.
-        # Progress is written to self._content_progress and read by the 100 ms
-        # poll tick — this is the only reliable way to show live feedback when
-        # queue messages can arrive faster than Tkinter redraws.
+        # Phase 2 — parse PDFs in a subprocess (keeps fitz off the GIL so the
+        # UI stays responsive). One worker processes PDFs sequentially so the
+        # background thread can update _content_progress after each one; the
+        # poll tick reads it every 100 ms to show live X/Y progress.
         total_pdfs = len(pdf_tasks)
         self._content_progress = (0, total_pdfs)
         content_hits = 0
         done_count = 0
+        pool = ProcessPoolExecutor(max_workers=1)
+        self._content_pool = pool
         try:
             for name, rel, full in pdf_tasks:
                 if self._content_token != token_snap:
                     return
                 try:
-                    snippets, total = parse_pdf_content(full, pattern, snippet_chars)
+                    snippets, total = pool.submit(
+                        parse_pdf_content, full, pattern, snippet_chars
+                    ).result()
                 except Exception:
                     snippets, total = [], 0
                 done_count += 1
@@ -933,6 +941,8 @@ class SearchDialog:
                 self._queue.put(("content_search_done", token_snap, content_hits))
         finally:
             self._content_progress = (0, 0)
+            self._content_pool = None
+            pool.shutdown(wait=False, cancel_futures=True)
 
     # ------------------------------------------------------------------
     # Cleanup
@@ -944,9 +954,10 @@ class SearchDialog:
         self._size_token += 1
         self._heuristic_token += 1
         self._content_token += 1
+        if self._content_pool is not None:
+            self._content_pool.shutdown(wait=False, cancel_futures=True)
         self._size_worker_stop.set()
         self._size_tasks.put(None)
-        # _content_token increment above is sufficient to cancel the content walker thread
         if self._heuristic_picker and self._heuristic_picker.winfo_exists():
             try:
                 self._heuristic_picker.destroy()
