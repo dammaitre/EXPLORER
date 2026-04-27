@@ -28,11 +28,14 @@ def parse_pdf_content(path: str, pattern: str, snippet_chars: int) -> tuple[list
         ctx_before = max(10, snippet_chars // 3)
         ctx_after  = max(10, snippet_chars // 2)
         for page_num, page in enumerate(doc, 1):
-            # xhtml mode correctly maps accented characters (é, â, î…)
-            xhtml = page.get_text("xhtml")
-            s = re.sub(r'</p>|</div>|<br[^>]*/?>', '\n', xhtml, flags=re.IGNORECASE)
-            s = re.sub(r'<[^>]+>', '', s)
-            text = _html.unescape(s)
+            text = page.get_text("text")
+            # Fall back to xhtml (slower but encoding-safe) when fitz couldn't
+            # resolve glyph→unicode mappings — indicated by >5% replacement chars.
+            if text and text.count("�") / len(text) > 0.05:
+                raw = page.get_text("xhtml")
+                raw = re.sub(r"</p>|</div>|<br[^>]*?/?>", "\n", raw, flags=re.IGNORECASE)
+                raw = re.sub(r"<[^>]+>", "", raw)
+                text = _html.unescape(raw)
             for m in rx.finditer(text):
                 total += 1
                 if len(snippets) < 5:

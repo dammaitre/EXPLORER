@@ -234,6 +234,7 @@ class SearchDialog:
         self._tree.bind("<Return>",          self._on_double_click)
         self._tree.bind("<Up>",              self._on_up)
         self._tree.bind("<Down>",            self._on_down)
+        self._tree.bind("<Left>",            self._on_navigate_to_parent)
         self._tree.bind("<Control-h>",       self._on_run_heuristic_hotkey)
         self._tree.bind("<Control-H>",       self._on_run_heuristic_hotkey)
         self._tree.bind("<Control-c>",       lambda _: self._copy_files_cb() if self._copy_files_cb else None)
@@ -801,9 +802,12 @@ class SearchDialog:
         threading.Thread(target=_worker, daemon=True).start()
 
     # Left click — open file with OS default app / navigate into dir
+    # Clicking the expand/collapse indicator only toggles the node; it does NOT open.
     def _on_left_click(self, event: tk.Event) -> None:
         iid = self._tree.identify_row(event.y)
         if not iid:
+            return
+        if self._tree.identify_element(event.x, event.y) == "indicator":
             return
         result = self._result_paths(iid)
         if not result:
@@ -831,8 +835,21 @@ class SearchDialog:
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         subprocess.Popen([sys.executable, "-m", "pyxplorer", target], **kwargs)
 
-    # Double-click / Enter — same as before: navigate (to dir or file's parent)
+    # Left arrow — navigate main frame to the selected result's parent directory
+    def _on_navigate_to_parent(self, event=None) -> str:
+        result = self._selected_result()
+        if not result:
+            return "break"
+        _, parent, _ = result
+        self._navigate_cb(parent)
+        self._dlg.lift()
+        return "break"
+
+    # Double-click / Enter — navigate (to dir or file's parent)
+    # Clicking the indicator is handled by Treeview itself; skip opening.
     def _on_double_click(self, event=None) -> None:
+        if event is not None and self._tree.identify_element(event.x, event.y) == "indicator":
+            return
         result = self._selected_result()
         if not result:
             return
@@ -886,7 +903,7 @@ class SearchDialog:
     def _content_search_all(self, root_dir: str, pattern: str,
                              token_snap: int, snippet_chars: int) -> None:
         """Walk root_dir, search every PDF's content, push pdf_content_result messages."""
-        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures import ProcessPoolExecutor, as_completed
         from ..core.search import parse_pdf_content
 
         # Phase 1 — fast directory walk, no PDF I/O
@@ -910,24 +927,26 @@ class SearchDialog:
         if self._content_token != token_snap:
             return
 
-        # Phase 2 — parse PDFs in a subprocess (keeps fitz off the GIL so the
-        # UI stays responsive). One worker processes PDFs sequentially so the
-        # background thread can update _content_progress after each one; the
-        # poll tick reads it every 100 ms to show live X/Y progress.
+        # Phase 2 — parse PDFs in parallel subprocesses (keeps fitz off the GIL).
+        # as_completed drives done_count so the poll tick shows live X/Y progress.
         total_pdfs = len(pdf_tasks)
         self._content_progress = (0, total_pdfs)
         content_hits = 0
         done_count = 0
-        pool = ProcessPoolExecutor(max_workers=1)
+        n_workers = min(4, max(1, os.cpu_count() or 2), total_pdfs)
+        pool = ProcessPoolExecutor(max_workers=n_workers)
         self._content_pool = pool
         try:
-            for name, rel, full in pdf_tasks:
+            futures = {
+                pool.submit(parse_pdf_content, full, pattern, snippet_chars): (name, rel, full)
+                for name, rel, full in pdf_tasks
+            }
+            for fut in as_completed(futures):
                 if self._content_token != token_snap:
                     return
+                name, rel, full = futures[fut]
                 try:
-                    snippets, total = pool.submit(
-                        parse_pdf_content, full, pattern, snippet_chars
-                    ).result()
+                    snippets, total = fut.result()
                 except Exception:
                     snippets, total = [], 0
                 done_count += 1
