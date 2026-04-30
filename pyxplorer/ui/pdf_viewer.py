@@ -55,6 +55,11 @@ _ZOOM_DEBOUNCE_MS = 200      # ms of scroll inactivity before re-render fires
 _DEFAULT_ZOOM = min(_ZOOM_MAX, max(_ZOOM_MIN, DEFAULT_PDF_ZOOM))
 _SCROLL_SPEED = SCROLL_SPEED
 _VISIBLE_PAGE_BUFFER = 2
+_TOC_WIDTH = 220
+# Matches a standalone section number on a bold line: "8."  "8.1"  "3.3.1.2"
+_NUM_ONLY_RE = re.compile(r'^([1-9]\d?(?:\.\d{1,3}){0,3})\.?$')
+# Matches inline "NUMBER  TITLE" on a single bold line
+_NUM_INLINE_RE = re.compile(r'^([1-9]\d?(?:\.\d{1,3}){0,3})\.?\s+(\S.+)$')
 
 
 class PDFViewer(ttk.Frame):
@@ -95,6 +100,12 @@ class PDFViewer(ttk.Frame):
         self._canvas_needs_clear: bool = False   # wipe canvas on first new page arrival
         self._stale_photos: list = []            # old photos kept alive until canvas wipe
         self._page_dim_cache: dict[int, tuple[float, float]] = {}  # index → (w_pt, h_pt)
+        self._toc: list = []
+        self._toc_item_pages: dict[str, int] = {}
+        self._toc_visible: bool = False
+        self._indicator_after: str | None = None
+        self._sash_drag_start_x: int | None = None
+        self._sash_drag_start_width: int = _TOC_WIDTH
 
         self._build()
         self.show_message("Select a single PDF file and press P.")
@@ -136,11 +147,52 @@ class PDFViewer(ttk.Frame):
             command=self._rotate_ccw,
         ).pack(side=tk.RIGHT, padx=(0, 2))
 
-        viewport = ttk.Frame(self, style="LowerContent.TFrame")
-        viewport.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self._toc_btn = ttk.Button(
+            top_bar,
+            text="≡",
+            width=2,
+            command=self._toggle_toc,
+            state="disabled",
+        )
+        self._toc_btn.pack(side=tk.RIGHT, padx=(0, 2))
+
+        self._toc_regex_btn = ttk.Button(
+            top_bar,
+            text="≡~",
+            width=3,
+            command=self._build_regex_toc,
+            state="disabled",
+        )
+        self._toc_regex_btn.pack(side=tk.RIGHT, padx=(0, 2))
+
+        content_area = ttk.Frame(self, style="LowerContent.TFrame")
+        content_area.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        # TOC panel — hidden initially; shown via pack(before=viewport) to preserve order
+        self._toc_panel = ttk.Frame(content_area, style="LowerContent.TFrame", width=_TOC_WIDTH)
+        self._toc_panel.pack_propagate(False)
+
+        toc_inner = ttk.Frame(self._toc_panel, style="LowerContent.TFrame")
+        toc_inner.pack(fill=tk.BOTH, expand=True)
+
+        self._toc_tree = ttk.Treeview(toc_inner, show="tree", selectmode="browse")
+        self._toc_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        toc_vsb = ttk.Scrollbar(toc_inner, orient="vertical", command=self._toc_tree.yview)
+        set_toc_vsb = make_autohide_pack_setter(toc_vsb, side=tk.RIGHT, fill=tk.Y)
+        self._toc_tree.configure(yscrollcommand=set_toc_vsb)
+        self._toc_tree.bind("<<TreeviewSelect>>", self._on_toc_select)
+
+        self._toc_sash = tk.Frame(content_area, width=4, background=_BORDER, cursor="sb_h_double_arrow")
+        self._toc_sash.pack_propagate(False)
+        self._toc_sash.bind("<ButtonPress-1>", self._on_sash_press)
+        self._toc_sash.bind("<B1-Motion>", self._on_sash_drag)
+
+        self._viewport = ttk.Frame(content_area, style="LowerContent.TFrame")
+        self._viewport.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self._canvas = tk.Canvas(
-            viewport,
+            self._viewport,
             background=_BG_DARK,
             highlightthickness=0,
             borderwidth=0,
@@ -149,11 +201,16 @@ class PDFViewer(ttk.Frame):
         )
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self._vsb = ttk.Scrollbar(viewport, orient="vertical", command=self._canvas.yview)
+        self._vsb = ttk.Scrollbar(self._viewport, orient="vertical", command=self._canvas.yview)
         self._hsb = ttk.Scrollbar(self, orient="horizontal", command=self._canvas.xview)
-        set_vsb = make_autohide_pack_setter(self._vsb, side=tk.RIGHT, fill=tk.Y)
+        _set_vsb_autohide = make_autohide_pack_setter(self._vsb, side=tk.RIGHT, fill=tk.Y)
         set_hsb = make_autohide_pack_setter(self._hsb, side=tk.BOTTOM, fill=tk.X)
-        self._canvas.configure(xscrollcommand=set_hsb, yscrollcommand=set_vsb)
+
+        def _set_vsb(lo, hi):
+            _set_vsb_autohide(lo, hi)
+            self._schedule_page_indicator_update()
+
+        self._canvas.configure(xscrollcommand=set_hsb, yscrollcommand=_set_vsb)
 
         self._canvas.bind("<MouseWheel>", self._on_mousewheel)
         self._canvas.bind("<Shift-MouseWheel>", self._on_shift_mousewheel)
@@ -220,6 +277,12 @@ class PDFViewer(ttk.Frame):
             except Exception:
                 pass
             self._visible_after = None
+        if self._indicator_after is not None:
+            try:
+                self.after_cancel(self._indicator_after)
+            except Exception:
+                pass
+            self._indicator_after = None
         self._clear_selection()
         self._canvas_needs_clear = False
         self._stale_photos.clear()
@@ -244,6 +307,7 @@ class PDFViewer(ttk.Frame):
         self._rotation = 0
         self._canvas.delete("all")
         self._canvas.configure(scrollregion=(0, 0, 0, 0))
+        self._clear_toc()
         self._message_var.set("PDF viewer ready")
         self._status_cb("PDF viewer ready")
 
@@ -274,6 +338,8 @@ class PDFViewer(ttk.Frame):
             self._status_cb(f"PDF open error: {exc}")
             return
 
+        toc = doc.get_toc(simple=False)
+
         saved_rotation = self._rotation
         self.unload()
         self._rotation = saved_rotation
@@ -287,6 +353,9 @@ class PDFViewer(ttk.Frame):
         self._canvas.delete("all")
         self._canvas.configure(scrollregion=(0, 0, 0, 0))
         self._rebuild_page_layouts()
+        self._toc = toc
+        self._populate_toc()
+        self._toc_regex_btn.configure(state="normal")
         self._request_visible_pages(priority=True)
 
     def _rotate_cw(self) -> None:
@@ -812,6 +881,7 @@ class PDFViewer(ttk.Frame):
     def _on_visible_render_tick(self) -> None:
         self._visible_after = None
         self._request_visible_pages()
+        self._update_page_indicator()
 
     def _render_page(self, doc, index: int, zoom: float, rotation: int = 0) -> dict:
         if fitz is None:
@@ -1199,18 +1269,17 @@ class PDFViewer(ttk.Frame):
         suffix = ""
         if self._failed_count > 0:
             suffix = f" ({self._failed_count} skipped)"
+        zoom_str = f"{round(self._zoom * 100)}%"
         if mode == "ready":
             if self._loaded_count == 0 and self._page_count > 0:
                 message = f"{name} — no pages could be rendered"
             else:
-                message = (
-                    f"{name} — {self._loaded_count} / {self._page_count} page(s) rendered"
-                    f"{suffix} at {round(self._zoom * 100)}%"
-                )
+                current = self._current_top_page() + 1
+                message = f"{name} — p.{current} / {self._page_count}{suffix}  {zoom_str}"
         else:
             message = (
-                f"Rendering {name} — {self._loaded_count} / {self._page_count} "
-                f"page(s){suffix} at {round(self._zoom * 100)}%"
+                f"Rendering {name} — {self._loaded_count} / {self._page_count}"
+                f"{suffix}  {zoom_str}"
             )
         self.show_message(message)
         self._status_cb(message)
@@ -1254,3 +1323,257 @@ class PDFViewer(ttk.Frame):
         height = self._page_layouts[-1]["y"] + self._page_layouts[-1]["render_height"] + _MARGIN_Y
         scroll_width = max(max_right + _MARGIN_X, max_width + (_MARGIN_X * 2))
         self._canvas.configure(scrollregion=(0, 0, scroll_width, height))
+
+    # ------------------------------------------------------------------ TOC
+
+    def _toggle_toc(self) -> None:
+        if self._toc_visible:
+            self._toc_panel.pack_forget()
+            self._toc_sash.pack_forget()
+            self._toc_visible = False
+        else:
+            self._toc_panel.pack(side=tk.LEFT, fill=tk.Y, before=self._viewport)
+            self._toc_sash.pack(side=tk.LEFT, fill=tk.Y, before=self._viewport)
+            self._toc_visible = True
+
+    def _populate_toc(self) -> None:
+        children = self._toc_tree.get_children()
+        if children:
+            self._toc_tree.delete(*children)
+        self._toc_item_pages.clear()
+        for i, entry in enumerate(self._toc):
+            level = entry[0]
+            title = entry[1]
+            page_1based = entry[2]
+            dest = entry[3] if len(entry) > 3 else {}
+            if isinstance(dest, dict) and dest.get("kind") == 1:
+                page_0based = dest.get("page", page_1based - 1)
+            else:
+                page_0based = page_1based - 1
+            page_0based = max(0, min(page_0based, self._page_count - 1))
+            iid = str(i)
+            self._toc_tree.insert("", "end", iid=iid, text="  " * (level - 1) + title)
+            self._toc_item_pages[iid] = page_0based
+        if self._toc:
+            self._toc_btn.configure(state="normal")
+        else:
+            self._toc_btn.configure(state="disabled")
+            if self._toc_visible:
+                self._toggle_toc()
+
+    def _clear_toc(self) -> None:
+        self._toc = []
+        self._toc_item_pages.clear()
+        children = self._toc_tree.get_children()
+        if children:
+            self._toc_tree.delete(*children)
+        self._toc_btn.configure(state="disabled")
+        self._toc_regex_btn.configure(state="disabled")
+        if self._toc_visible:
+            self._toggle_toc()
+
+    def _on_toc_select(self, _event: tk.Event) -> None:
+        selected = self._toc_tree.selection()
+        if not selected:
+            return
+        page_index = self._toc_item_pages.get(selected[0])
+        if page_index is not None:
+            self._scroll_to_page(page_index)
+            self._canvas.focus_set()
+
+    # ---------------------------------------------------------- sash resize
+
+    def _on_sash_press(self, event: tk.Event) -> None:
+        self._sash_drag_start_x = event.x_root
+        self._sash_drag_start_width = self._toc_panel.winfo_width()
+
+    def _on_sash_drag(self, event: tk.Event) -> None:
+        if self._sash_drag_start_x is None:
+            return
+        delta = event.x_root - self._sash_drag_start_x
+        new_width = max(120, min(500, self._sash_drag_start_width + delta))
+        self._toc_panel.configure(width=int(new_width))
+
+    # --------------------------------------------------- page indicator
+
+    def _schedule_page_indicator_update(self) -> None:
+        if self._indicator_after is not None:
+            try:
+                self.after_cancel(self._indicator_after)
+            except Exception:
+                pass
+        self._indicator_after = self.after(60, self._do_update_page_indicator)
+
+    def _do_update_page_indicator(self) -> None:
+        self._indicator_after = None
+        self._update_page_indicator()
+
+    def _update_page_indicator(self) -> None:
+        if self._doc is None or not self._page_layouts or self._pending_pages:
+            return
+        name = os.path.basename(to_display(self._doc_path or ""))
+        suffix = f" ({self._failed_count} skipped)" if self._failed_count > 0 else ""
+        current = self._current_top_page() + 1
+        zoom_str = f"{round(self._zoom * 100)}%"
+        self.show_message(f"{name} — p.{current} / {self._page_count}{suffix}  {zoom_str}")
+
+    # ------------------------------------------------- regex TOC scan
+
+    def _build_regex_toc(self) -> None:
+        if self._doc is None:
+            return
+        token = self._load_token
+        doc_bytes = self._doc_bytes
+        doc_path = self._doc_path
+        self._status_cb("Scanning PDF for TOC pattern…")
+        threading.Thread(
+            target=self._regex_toc_worker,
+            args=(token, doc_bytes, doc_path),
+            daemon=True,
+        ).start()
+
+    def _regex_toc_worker(
+        self,
+        token: int,
+        doc_bytes: bytes | None,
+        doc_path: str | None,
+    ) -> None:
+        try:
+            entries = self._scan_regex_toc(doc_bytes, doc_path)
+        except Exception as exc:
+            entries = []
+            self.after(0, lambda: self._status_cb(f"Regex TOC error: {exc}"))
+        if token == self._load_token:
+            self.after(0, lambda: self._apply_regex_toc(entries, token))
+
+    def _scan_regex_toc(
+        self,
+        doc_bytes: bytes | None,
+        doc_path: str | None,
+    ) -> list:
+        """Return [(level, num_str, title, pdf_idx), ...] sorted by pdf_idx."""
+        if fitz is None:
+            return []
+        if doc_bytes:
+            doc = fitz.open(stream=doc_bytes, filetype="pdf")
+        elif doc_path:
+            doc = fitz.open(doc_path)
+        else:
+            return []
+
+        try:
+            raw = self._collect_bold_headings(doc)
+        finally:
+            doc.close()
+
+        if not raw:
+            return []
+
+        # Deduplicate: keep first occurrence; drop entries that repeat 5+ times
+        # (repeating bold lines are running headers / footers)
+        count: dict[tuple[str, str], int] = {}
+        first: dict[tuple[str, str], tuple] = {}
+        for entry in raw:
+            key = (entry[1], entry[2])
+            count[key] = count.get(key, 0) + 1
+            if key not in first:
+                first[key] = entry
+
+        result = [e for k, e in first.items() if count[k] <= 4]
+        result.sort(key=lambda x: x[3])
+        return result
+
+    def _collect_bold_headings(self, doc) -> list:
+        """
+        Extract numbered headings by font styling.
+
+        PDFs typically split each heading across two consecutive all-bold lines:
+          line A — section number only  (e.g. "8." or "3.3.1")
+          line B — title text           (e.g. "Méthode de calculs des soutènements")
+
+        Also handles the single-line form: "8.1  PAROIS PIEUX JOINTIFS…"
+
+        Returns [(level, num_str, title, pdf_idx), …] in document order.
+        """
+        from collections import Counter
+
+        # Pass 1 — compute modal font size (= body text size)
+        size_counter: Counter = Counter()
+        for idx in range(doc.page_count):
+            for block in doc.load_page(idx).get_text("dict")["blocks"]:
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        if span["text"].strip():
+                            size_counter[round(span["size"])] += 1
+        body_size = size_counter.most_common(1)[0][0] if size_counter else 10
+        min_sz = max(body_size * 0.85, 7)  # headings must be ≥ 85 % of body size
+
+        # Pass 2 — collect all all-bold lines across the whole document
+        bold_lines: list[tuple[str, int]] = []  # (text, pdf_idx)
+        for idx in range(doc.page_count):
+            for block in doc.load_page(idx).get_text("dict")["blocks"]:
+                for line in block.get("lines", []):
+                    spans = [
+                        s for s in line.get("spans", [])
+                        if s["text"].strip() and s["size"] >= min_sz
+                    ]
+                    if not spans:
+                        continue
+                    if not all(s["flags"] & 16 for s in spans):
+                        continue  # at least one non-bold span → not a heading line
+                    text = " ".join(s["text"].strip() for s in spans).strip()
+                    if text:
+                        bold_lines.append((text, idx))
+
+        # Pass 3 — pair number-only lines with the following title line
+        entries: list[tuple[int, str, str, int]] = []
+        i = 0
+        while i < len(bold_lines):
+            text, pdf_idx = bold_lines[i]
+
+            # Skip purely numeric lines (page numbers in footers)
+            if text.isdigit():
+                i += 1
+                continue
+
+            m_num = _NUM_ONLY_RE.match(text)
+            if m_num:
+                # Number-only line — title is on the very next bold line
+                num = m_num.group(1)
+                if i + 1 < len(bold_lines):
+                    next_text, _ = bold_lines[i + 1]
+                    if not _NUM_ONLY_RE.match(next_text) and len(next_text) >= 3:
+                        level = num.count(".") + 1
+                        entries.append((level, num, next_text, pdf_idx))
+                        i += 2
+                        continue
+                i += 1
+                continue
+
+            # Inline form: "3.3.1  Title text"
+            m_inline = _NUM_INLINE_RE.match(text)
+            if m_inline:
+                num = m_inline.group(1)
+                title = m_inline.group(2).strip()
+                if len(title) >= 3:
+                    level = num.count(".") + 1
+                    entries.append((level, num, title, pdf_idx))
+
+            i += 1
+
+        return entries
+
+    def _apply_regex_toc(self, entries: list, token: int) -> None:
+        if token != self._load_token:
+            return
+        if not entries:
+            self._status_cb("Regex TOC: no numbered headings found in this PDF")
+            return
+        self._toc = [
+            [level, f"{num}  {title}", pdf_idx + 1, {"kind": 1, "page": pdf_idx}]
+            for level, num, title, pdf_idx in entries
+        ]
+        self._populate_toc()
+        if not self._toc_visible:
+            self._toggle_toc()
+        self._status_cb(f"Regex TOC: {len(entries)} headings found")
